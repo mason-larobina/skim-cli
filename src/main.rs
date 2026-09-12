@@ -75,9 +75,15 @@ struct Cli {
     #[arg(long, value_name = "N", default_value_t = 1024)]
     map_budget: usize,
 
-    /// Bias --map toward these files or directories (repeatable).
-    #[arg(long = "focus", value_name = "PATH")]
+    /// Bias --map toward these files or directories (repeatable). `--deps` is
+    /// an alias, since the bias reveals what these paths depend on.
+    #[arg(long = "focus", visible_alias = "deps", value_name = "PATH")]
     map_focus: Vec<PathBuf>,
+
+    /// List every occurrence of NAME with its enclosing Type.method — a
+    /// structural grep for finding the call sites before a rename.
+    #[arg(long, value_name = "NAME")]
+    referrers: Option<String>,
 }
 
 fn parse_band(s: &str) -> Result<(f64, f64), String> {
@@ -130,6 +136,24 @@ fn run() -> Result<ExitCode> {
     } else {
         cli.paths.clone()
     };
+
+    if let Some(symbol) = &cli.referrers {
+        let opts = map::MapOptions {
+            force: forced,
+            ..map::MapOptions::default()
+        };
+        let report = map::referrers(&paths, symbol, &opts)?;
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            print!("{}", report.text());
+        }
+        return Ok(if report.occurrences == 0 {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        });
+    }
 
     if cli.map {
         let context = if !cli.map_focus.is_empty() {

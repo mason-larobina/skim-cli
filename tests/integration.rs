@@ -379,6 +379,52 @@ fn map_focus_biases_the_ranking() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(feature = "lang-java")]
+#[test]
+fn referrers_labels_each_hit_with_its_enclosing_definition() {
+    let dir = tempdir("referrers");
+    std::fs::write(
+        dir.join("Thing.java"),
+        "class Thing {\n    void run() {\n        helper();\n    }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("User.java"),
+        "class User {\n    void go() {\n        helper();\n        helper();\n    }\n}\n",
+    )
+    .unwrap();
+    let report =
+        map::referrers(std::slice::from_ref(&dir), "helper", &MapOptions::default()).unwrap();
+    assert_eq!(report.occurrences, 3);
+    assert_eq!(report.files, 2);
+    assert!(
+        report.entries.iter().any(|e| e.enclosing == "Thing.run"),
+        "{:?}",
+        report.entries
+    );
+    assert!(
+        report.entries.iter().any(|e| e.enclosing == "User.go"),
+        "{:?}",
+        report.entries
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn referrers_ignores_mentions_in_comments() {
+    let dir = tempdir("referrers-comments");
+    std::fs::write(
+        dir.join("A.java"),
+        "class A {\n    /** see {@link Widget}. */\n    void run() {}\n}\n",
+    )
+    .unwrap();
+    let report =
+        map::referrers(std::slice::from_ref(&dir), "Widget", &MapOptions::default()).unwrap();
+    assert_eq!(report.occurrences, 0, "{:?}", report.entries);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn every_profile_extension_is_unique() {
     use std::collections::HashSet;

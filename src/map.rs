@@ -53,6 +53,53 @@ pub struct Map {
     pub entries: Vec<MapEntry>,
 }
 
+/// One place a name occurs, with the definition that encloses it.
+#[derive(Serialize, Debug)]
+pub struct Occurrence {
+    pub file: String,
+    pub line: usize,
+    /// `Type.method`, `Type`, or empty at file scope.
+    pub enclosing: String,
+}
+
+/// Every occurrence of a name across the scanned files. Unlike the map graph,
+/// which resolves references only to whole types and top-level functions, this
+/// matches any identifier, so it finds method, field and constant uses too.
+/// The resolution is lexical, exactly like `grep`, but each hit names the
+/// definition that contains it.
+#[derive(Serialize, Debug)]
+pub struct ReferrerReport {
+    pub symbol: String,
+    pub occurrences: usize,
+    pub files: usize,
+    pub entries: Vec<Occurrence>,
+}
+
+impl ReferrerReport {
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        let mut last: Option<&str> = None;
+        for e in &self.entries {
+            if last != Some(e.file.as_str()) {
+                out.push_str(&e.file);
+                out.push_str(":\n");
+                last = Some(&e.file);
+            }
+            let enc = if e.enclosing.is_empty() {
+                "(file scope)"
+            } else {
+                &e.enclosing
+            };
+            out.push_str(&format!("  {:<6} {}\n", e.line, enc));
+        }
+        out.push_str(&format!(
+            "\n{} occurrence(s) of {:?} in {} file(s)\n",
+            self.occurrences, self.symbol, self.files
+        ));
+        out
+    }
+}
+
 struct Def {
     file: usize,
     name: String,
@@ -227,6 +274,52 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
     }
 
     Ok(Map { text, entries })
+}
+
+/// Find every occurrence of `symbol` under `paths`, each labelled with its
+/// enclosing definition. This is the "who uses this" half of the map: the
+/// reference graph answers what a file depends on, this answers where a name is
+/// touched, ahead of a rename or a signature change.
+///
+/// The match is lexical — the same thing `grep` does — so a same-named local is
+/// reported too. What it adds over `grep` is the enclosing `Type.method`, so the
+/// result is the list of scopes to change rather than a pile of line numbers.
+pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<ReferrerReport> {
+    let files = collect(paths, opts.force);
+    let mut entries: Vec<Occurrence> = Vec::new();
+    for path in &files {
+        let src =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let lang = opts.force.unwrap_or_else(|| Lang::from_path(path));
+        let tree = render::parse(&src, lang)?;
+        let mut hits: Vec<(usize, String)> = Vec::new();
+        scan_hits(tree.root_node(), &src, lang, symbol, None, &mut hits);
+        let file = rel(path);
+        for (line, enclosing) in hits {
+            entries.push(Occurrence {
+                file: file.clone(),
+                line,
+                enclosing,
+            });
+        }
+    }
+    entries.sort_by(|a, b| {
+        a.file
+            .cmp(&b.file)
+            .then(a.line.cmp(&b.line))
+            .then(a.enclosing.cmp(&b.enclosing))
+    });
+    let files = {
+        let mut seen: Vec<&str> = entries.iter().map(|e| e.file.as_str()).collect();
+        seen.dedup();
+        seen.len()
+    };
+    Ok(ReferrerReport {
+        symbol: symbol.to_string(),
+        occurrences: entries.len(),
+        files,
+        entries,
+    })
 }
 
 fn collect(paths: &[PathBuf], force: Option<Lang>) -> Vec<PathBuf> {
@@ -408,6 +501,34 @@ fn collect_refs(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         collect_refs(child, src, node_def, by_name, defs, file, weights, current);
+    }
+}
+
+/// Walk `node` recording every `symbol` identifier, labelled with the nearest
+/// enclosing definition (`Type.method`). `enc` carries that label down.
+fn scan_hits(
+    node: Node,
+    src: &str,
+    lang: Lang,
+    symbol: &str,
+    enc: Option<&str>,
+    hits: &mut Vec<(usize, String)>,
+) {
+    let label = if lang.def_kinds().contains(&node.kind()) {
+        def_name(node, src).map(|n| match enc {
+            Some(e) => format!("{e}.{n}"),
+            None => n.to_string(),
+        })
+    } else {
+        None
+    };
+    let enc = label.as_deref().or(enc);
+    if is_reference_kind(node.kind()) && &src[node.start_byte()..node.end_byte()] == symbol {
+        hits.push((node.start_position().row + 1, enc.unwrap_or("").to_string()));
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        scan_hits(child, src, lang, symbol, enc, hits);
     }
 }
 

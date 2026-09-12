@@ -12,7 +12,8 @@ Syntax-aware source skimming and documentation-budget checks.
 - **Map what matters.** `--map` ranks the types and top-level functions under a
   path by how much the code references them, then prints the top of that
   ranking within a token budget — a small, relevance-ranked skeleton of the
-  repo.
+  repo. `--referrers` answers the reverse question: every use of one name,
+  labelled with the scope that contains it.
 - **Check a budget.** Given a document, it finds the source that document
   tracks and asserts that the document's size stays proportional to that source
   — on a square-root curve for a scouting index, or a straight ratio for a
@@ -41,6 +42,7 @@ skim [PATHS]...            # render skeletons (default)
 skim --check [PATHS]...    # run the budget gate; exit 1 on any violation
 skim --count [PATHS]...    # print raw metrics, no verdict
 skim --map [PATHS]...      # a ranked repo map, within a token budget
+skim --referrers NAME [PATHS]...  # every use of a name, with its enclosing scope
 ```
 
 `PATHS` may be files, directories (walked, respecting ignore files), or quoted
@@ -51,7 +53,8 @@ skim src/                          # every source file's skeleton
 skim --docs src/foo.java           # …with each declaration's doc comment
 skim 'src/**/*.java' | less        # one file's outline
 skim --map src/                    # the repo's most-referenced types
-skim --map --focus src/core src/   # …biased toward src/core
+skim --map --deps src/core src/    # …biased toward what src/core depends on
+skim --referrers FOOT_BAND src/    # every use of a name, with its scope
 skim --check docs/                 # check every DESIGN.md under docs/
 skim --check --band 4,12 src/
 skim --count --json src/ | jq .
@@ -64,7 +67,8 @@ Useful flags:
 | `--docs` | Keep each declaration's leading doc comment |
 | `--map` | Print a ranked repo map instead of a full skeleton |
 | `--map-budget N` | Approximate token budget for `--map` (default 1024) |
-| `--focus PATH` | Bias `--map` toward this file/dir (repeatable) |
+| `--focus PATH` | Bias `--map` toward this file/dir (`--deps` is an alias; repeatable) |
+| `--referrers NAME` | List every use of a name with its enclosing scope |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
 | `--band LO,HI` | Override the band for every doc |
 | `--comment-max R` | Override the comment ceiling (0.0–1.0) |
@@ -102,19 +106,51 @@ skim --map --focus src/core/GameProgram.java src/     # what GameProgram relies 
 skim --map --map-budget 2048 src/ --json
 ```
 
-- `--focus <PATH>` biases the ranking toward those files. Without it the map is
-  the repo's global shape; with it, the map is the API surface relevant to the
-  files you named.
+- `--focus <PATH>` (alias `--deps`) biases the ranking toward those files.
+  Without it the map is the repo's global shape; with it, the map is the API
+  surface relevant to the files you named. The bias flows *forward*: the result
+  is what those paths depend on, not what depends on them — use `--referrers`
+  for the other direction.
 - `--map-budget N` sets an approximate token ceiling (about four bytes per
   token).
-- Ranking is at the **type** level. A class's methods and fields are part of its
-  skeleton, and their references count toward the class, so a central class
-  outranks an accessor called in a hundred places. Only types and top-level
-  functions are nodes; methods and fields are not.
+- Ranking is at the **type** level. Nodes are types and top-level functions;
+  methods and fields are not, so an accessor never competes with its class, and
+  a reference from inside a type attributes to that type.
 - References resolve loosely: a name defined in the same file shadows a
   same-named definition elsewhere, and cross-file references weigh more than
   local ones. There is no type or scope resolution — the map is a heuristic for
   orientation, not a compiler.
+
+## Referrers (`--referrers`)
+
+`--map` shows what a file *depends on*. `--referrers` answers the other
+direction: where a name is *used*. It matches every identifier equal to the name
+and prints each hit labelled with the definition that contains it — `Type.method`,
+`Type`, or file scope:
+
+```sh
+skim --referrers AnchoredLayout src/      # which scopes reference the type
+skim --referrers FOOT_BAND src/           # every use of a constant
+skim --referrers hasCabinet --json src/   # machine-readable
+```
+
+```
+src/bobble/Bobble.java:
+  217    Bobble.anchored
+  335    Bobble.layout
+...
+76 occurrence(s) of "AnchoredLayout" in 17 file(s)
+```
+
+It exits 1 when the name is absent, so it drops into a shell test like `grep`.
+
+The match is lexical — the same thing `grep` does — so a same-named local is
+reported too, and it only sees **code**, not comments or strings: a javadoc
+`{@link Widget}` is not a hit. What it adds over `grep` is the enclosing
+`Type.method`, so the result is the list of scopes to change before a rename
+rather than a pile of line numbers. Methods, fields and constants work the same
+as types, which the `--map` graph — whole types and top-level functions only —
+cannot reach.
 
 ## Directives
 
