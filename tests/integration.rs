@@ -25,6 +25,7 @@ fn opts() -> CheckOptions {
     }
 }
 
+#[cfg(feature = "lang-java")]
 #[test]
 fn render_elides_bodies_but_keeps_signatures() {
     let src = "class A {\n    int f() { return 42; }\n    int g();\n}\n";
@@ -43,6 +44,7 @@ fn markdown_skeleton_ignores_blank_and_lazy_lines() {
     assert_eq!(sk.len(), 2, "{sk:?}");
 }
 
+#[cfg(feature = "lang-java")]
 #[test]
 fn comment_lines_are_syntax_aware() {
     // The `//` inside the string is code; the line comment is comment.
@@ -53,6 +55,7 @@ fn comment_lines_are_syntax_aware() {
     assert_eq!(m.decls, 3, "{m:?}"); // class + field + method
 }
 
+#[cfg(feature = "lang-java")]
 #[test]
 fn sqrt_band_flags_under_documented_doc() {
     let dir = tempdir("under");
@@ -69,6 +72,7 @@ fn sqrt_band_flags_under_documented_doc() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(feature = "lang-java")]
 #[test]
 fn sqrt_band_passes_a_proportional_doc() {
     let dir = tempdir("ok");
@@ -87,6 +91,7 @@ fn sqrt_band_passes_a_proportional_doc() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(feature = "lang-java")]
 #[test]
 fn directive_overrides_band_and_relation() {
     let dir = tempdir("directive");
@@ -124,6 +129,7 @@ fn self_check_flags_over_indexed_skeleton() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(feature = "lang-java")]
 #[test]
 fn comment_ceiling_fires() {
     let dir = tempdir("comments");
