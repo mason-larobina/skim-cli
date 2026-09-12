@@ -1,0 +1,37 @@
+[package]
+name = "skim-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Syntax-aware source skimming and documentation-budget checks"
+license = "MIT"
+readme = "README.md"
+keywords = ["documentation", "tree-sitter", "skeleton", "lint", "api"]
+categories = ["development-tools", "command-line-utilities"]
+
+[lib]
+name = "skim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "skim"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+globset = "0.4"
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tree-sitter = "0.27"
+tree-sitter-java = "0.23"
+tree-sitter-md = "0.5"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
