@@ -60,6 +60,7 @@ Useful flags:
 | `--lang <LANG>` | Force a grammar instead of inferring it |
 | `--list-languages` | List the compiled-in languages (with `--json`) |
 | `--json` | Machine-readable output |
+| `-q, --quiet` | Only failing checks and the summary |
 
 ## Directives
 

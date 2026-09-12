@@ -49,6 +49,10 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Only print failing checks (and the summary).
+    #[arg(short, long)]
+    quiet: bool,
+
     /// Force a grammar instead of inferring it from the extension.
     #[arg(long, value_name = "LANG")]
     lang: Option<String>,
@@ -121,7 +125,7 @@ fn run() -> Result<ExitCode> {
         if cli.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
-            check::print_human(&report);
+            check::print_human(&report, cli.quiet);
         }
         return Ok(if report.violations > 0 {
             ExitCode::from(1)

@@ -322,8 +322,13 @@ pub fn collect_docs(paths: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn print_human(report: &Report) {
+pub fn print_human(report: &Report, quiet: bool) {
+    let mut printed = false;
     for c in &report.checks {
+        if quiet && !c.failed() {
+            continue;
+        }
+        printed = true;
         let mark = match c.status.as_str() {
             "ok" => "ok  ",
             "skipped" => "skip",
@@ -361,8 +366,11 @@ pub fn print_human(report: &Report) {
             }
         }
     }
+    if printed {
+        println!();
+    }
     println!(
-        "\n{} docs, {} violation(s)",
+        "{} docs, {} violation(s)",
         report.checks.len(),
         report.violations
     );
