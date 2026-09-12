@@ -66,6 +66,11 @@ struct Cli {
     #[arg(long)]
     docs: bool,
 
+    /// Prefix each declaration (or markdown skeleton line) with its 1-based
+    /// source line, so `read` can jump straight to the body skim elided.
+    #[arg(long)]
+    lines: bool,
+
     /// Print a ranked repo map: the definitions the scanned files reference
     /// most, within a token budget.
     #[arg(long)]
@@ -84,6 +89,15 @@ struct Cli {
     /// structural grep for finding the call sites before a rename.
     #[arg(long, value_name = "NAME")]
     referrers: Option<String>,
+
+    /// With --referrers, also match comments and string literals (a rename's
+    /// `"Found"` label and its javadoc), not just code identifiers.
+    #[arg(long)]
+    text: bool,
+
+    /// With --referrers, fold ASCII case when matching.
+    #[arg(long = "ignore-case")]
+    ignore_case: bool,
 }
 
 fn parse_band(s: &str) -> Result<(f64, f64), String> {
@@ -140,6 +154,8 @@ fn run() -> Result<ExitCode> {
     if let Some(symbol) = &cli.referrers {
         let opts = map::MapOptions {
             force: forced,
+            text: cli.text,
+            ignore_case: cli.ignore_case,
             ..map::MapOptions::default()
         };
         let report = map::referrers(&paths, symbol, &opts)?;
@@ -167,6 +183,7 @@ fn run() -> Result<ExitCode> {
             force: forced,
             docs: cli.docs,
             budget_tokens: cli.map_budget,
+            ..map::MapOptions::default()
         };
         let result = map::run(&paths, &context, &opts)?;
         if cli.json {
@@ -235,9 +252,9 @@ fn run() -> Result<ExitCode> {
             std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
         let lang = forced.unwrap_or_else(|| Lang::from_path(p));
         let rendered = if lang.is_doc() {
-            render::render_markdown(&text, lang)?
+            render::render_markdown_opts(&text, lang, cli.lines)?
         } else {
-            render::render_source_with(&text, lang, cli.docs)?
+            render::render_source_opts(&text, lang, cli.docs, cli.lines)?
         };
         if multiple {
             println!("==> {} <==", p.display());

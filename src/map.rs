@@ -25,6 +25,10 @@ pub struct MapOptions {
     pub force: Option<Lang>,
     pub docs: bool,
     pub budget_tokens: usize,
+    /// `--referrers` also matches comments and string literals.
+    pub text: bool,
+    /// `--referrers` folds ASCII case.
+    pub ignore_case: bool,
 }
 
 impl Default for MapOptions {
@@ -33,6 +37,8 @@ impl Default for MapOptions {
             force: None,
             docs: false,
             budget_tokens: 4096,
+            text: false,
+            ignore_case: false,
         }
     }
 }
@@ -72,6 +78,8 @@ pub struct ReferrerReport {
     pub symbol: String,
     pub occurrences: usize,
     pub files: usize,
+    /// Whether comments and string literals were included in the scan.
+    pub text: bool,
     pub entries: Vec<Occurrence>,
 }
 
@@ -92,8 +100,13 @@ impl ReferrerReport {
             };
             out.push_str(&format!("  {:<6} {}\n", e.line, enc));
         }
+        let note = if self.text {
+            ""
+        } else {
+            " (code identifiers only; pass --text to include comments and string literals)"
+        };
         out.push_str(&format!(
-            "\n{} occurrence(s) of {:?} in {} file(s)\n",
+            "\n{} occurrence(s) of {:?} in {} file(s){note}\n",
             self.occurrences, self.symbol, self.files
         ));
         out
@@ -293,7 +306,16 @@ pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<R
         let lang = opts.force.unwrap_or_else(|| Lang::from_path(path));
         let tree = render::parse(&src, lang)?;
         let mut hits: Vec<(usize, String)> = Vec::new();
-        scan_hits(tree.root_node(), &src, lang, symbol, None, &mut hits);
+        scan_hits(
+            tree.root_node(),
+            &src,
+            lang,
+            symbol,
+            opts.text,
+            opts.ignore_case,
+            None,
+            &mut hits,
+        );
         let file = rel(path);
         for (line, enclosing) in hits {
             entries.push(Occurrence {
@@ -318,6 +340,7 @@ pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<R
         symbol: symbol.to_string(),
         occurrences: entries.len(),
         files,
+        text: opts.text,
         entries,
     })
 }
@@ -504,13 +527,19 @@ fn collect_refs(
     }
 }
 
-/// Walk `node` recording every `symbol` identifier, labelled with the nearest
-/// enclosing definition (`Type.method`). `enc` carries that label down.
+/// Walk `node` recording every `symbol` occurrence, labelled with the nearest
+/// enclosing definition (`Type.method`). `enc` carries that label down. With
+/// `text`, comments and string literals are matched too (as whole words), which
+/// is what a rename needs to catch a label like `"Found"` and its javadoc; the
+/// default scan is code identifiers only.
+#[allow(clippy::too_many_arguments)]
 fn scan_hits(
     node: Node,
     src: &str,
     lang: Lang,
     symbol: &str,
+    text: bool,
+    ignore_case: bool,
     enc: Option<&str>,
     hits: &mut Vec<(usize, String)>,
 ) {
@@ -523,13 +552,71 @@ fn scan_hits(
         None
     };
     let enc = label.as_deref().or(enc);
-    if is_reference_kind(node.kind()) && &src[node.start_byte()..node.end_byte()] == symbol {
-        hits.push((node.start_position().row + 1, enc.unwrap_or("").to_string()));
+    let kind = node.kind();
+    if is_reference_kind(kind) {
+        let found = &src[node.start_byte()..node.end_byte()];
+        let matches = if ignore_case {
+            found.eq_ignore_ascii_case(symbol)
+        } else {
+            found == symbol
+        };
+        if matches {
+            hits.push((node.start_position().row + 1, enc.unwrap_or("").to_string()));
+            return;
+        }
+    } else if text && (lang.comment_kinds().contains(&kind) || is_string_kind(kind)) {
+        let raw = &src[node.start_byte()..node.end_byte()];
+        if let Some(off) = find_text(raw, symbol, ignore_case) {
+            let line = node.start_position().row + 1 + raw[..off].matches('\n').count();
+            hits.push((line, enc.unwrap_or("").to_string()));
+        }
+        // A comment or string literal contains no nested declarations, and its
+        // child `string_fragment` would otherwise double-count the same hit.
+        return;
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        scan_hits(child, src, lang, symbol, enc, hits);
+        scan_hits(child, src, lang, symbol, text, ignore_case, enc, hits);
     }
+}
+
+/// Whether a node kind is a string/char literal whose text `--text` should scan.
+fn is_string_kind(kind: &str) -> bool {
+    kind.contains("string") || kind.contains("char") || kind == "quoted_attribute_value"
+}
+
+/// The byte offset of `symbol` in `text` as a whole word, optionally ASCII
+/// case-insensitively. Whole-word matching keeps `--text` a rename tool rather
+/// than a substring search: `Found` hits `"Found"` and `Found/Best`, not
+/// `Foundations` or `Found by looking`.
+fn find_text(text: &str, symbol: &str, ignore_case: bool) -> Option<usize> {
+    if symbol.is_empty() {
+        return None;
+    }
+    let hay = if ignore_case {
+        text.to_ascii_lowercase()
+    } else {
+        text.to_string()
+    };
+    let needle = if ignore_case {
+        symbol.to_ascii_lowercase()
+    } else {
+        symbol.to_string()
+    };
+    let bytes = hay.as_bytes();
+    for (start, _) in hay.match_indices(&needle) {
+        let end = start + needle.len();
+        let before_ok = start == 0 || !is_word_byte(bytes[start - 1]);
+        let after_ok = end == bytes.len() || !is_word_byte(bytes[end]);
+        if before_ok && after_ok {
+            return Some(start);
+        }
+    }
+    None
+}
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 fn pagerank(defs: &[Def], files: &[PathBuf], ctx: &[PathBuf]) -> Vec<f64> {

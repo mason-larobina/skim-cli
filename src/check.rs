@@ -36,6 +36,9 @@ pub struct CheckReport {
     /// ok | under | over | comments | skipped
     pub status: String,
     pub self_check: bool,
+    /// Where the contract came from (`config: <glob>`, `directive`, `cli`,
+    /// `siblings`, `self`, `default`), so a mis-scoped run is self-diagnosing.
+    pub origin: String,
     pub comment: Option<CommentReport>,
 }
 
@@ -154,6 +157,7 @@ fn evaluate(text: &str, pair: &Pair) -> CheckReport {
             band: [lo, hi],
             status: status_name(status).to_string(),
             self_check: true,
+            origin: pair.origin.clone(),
             comment: None,
         };
     }
@@ -193,6 +197,7 @@ fn evaluate(text: &str, pair: &Pair) -> CheckReport {
             band: [pair.band.0, pair.band.1],
             status: status_name(Status::Skipped).to_string(),
             self_check: false,
+            origin: pair.origin.clone(),
             comment: None,
         };
     }
@@ -214,6 +219,7 @@ fn evaluate(text: &str, pair: &Pair) -> CheckReport {
         band: [lo, hi],
         status: status_name(status).to_string(),
         self_check: false,
+        origin: pair.origin.clone(),
         comment,
     }
 }
@@ -309,6 +315,7 @@ fn evaluate_aggregate(
         band: [lo, hi],
         status: status_name(status).to_string(),
         self_check: false,
+        origin: format!("config: {} (aggregate)", rule.doc_pattern),
         comment,
     })
 }
@@ -324,24 +331,32 @@ pub fn collect_docs(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 pub fn print_human(report: &Report, quiet: bool) {
     let mut printed = false;
+    let mut skipped = 0usize;
     for c in &report.checks {
+        // A skipped doc has no tracked source; listing 170-odd of them buries
+        // the real verdicts, so they are counted and reported once below.
+        if c.status == "skipped" {
+            skipped += 1;
+            continue;
+        }
         if quiet && !c.failed() {
             continue;
         }
         printed = true;
-        let mark = match c.status.as_str() {
-            "ok" => "ok  ",
-            "skipped" => "skip",
-            _ => "FAIL",
+        let mark = if c.status == "ok" { "ok  " } else { "FAIL" };
+        let origin = if c.origin.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", c.origin)
         };
         if c.self_check {
             println!(
-                "{mark} {:>7.2}  {}  (skeleton={} body={} band {:.2}..{:.2})",
+                "{mark} {:>7.2}  {}  (skeleton={} body={} band {:.2}..{:.2}){origin}",
                 c.ratio, c.doc, c.doc_lines, c.source_metric, c.band[0], c.band[1]
             );
         } else {
             println!(
-                "{mark} {:>7.2}  {}  (doc={} {}={} {} band {:.2}..{:.2})",
+                "{mark} {:>7.2}  {}  (doc={} {}={} {} band {:.2}..{:.2}){origin}",
                 c.ratio,
                 c.doc,
                 c.doc_lines,
@@ -368,6 +383,9 @@ pub fn print_human(report: &Report, quiet: bool) {
     }
     if printed {
         println!();
+    }
+    if skipped > 0 && !quiet {
+        println!("({skipped} doc(s) skipped: no tracked source)");
     }
     println!(
         "{} docs, {} violation(s)",

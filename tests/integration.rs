@@ -381,6 +381,21 @@ fn map_focus_biases_the_ranking() {
 
 #[cfg(feature = "lang-java")]
 #[test]
+fn lines_prefixes_each_declaration_with_its_source_row() {
+    let src = "class A {\n    int f() { return 1; }\n}\n";
+    let lang = Lang::from_path(Path::new("x.java"));
+    let out = render::render_source_opts(src, lang, false, true).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].ends_with("class A {"), "{out}");
+    assert!(lines[0].starts_with("    1  "), "{out}");
+    assert!(lines[1].trim_start().starts_with("2      int f()"), "{out}");
+    // The default renderer stays unnumbered.
+    let plain = render::render_source(src, lang).unwrap();
+    assert!(plain.starts_with("class A {"), "{plain}");
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
 fn referrers_labels_each_hit_with_its_enclosing_definition() {
     let dir = tempdir("referrers");
     std::fs::write(
@@ -407,6 +422,75 @@ fn referrers_labels_each_hit_with_its_enclosing_definition() {
         "{:?}",
         report.entries
     );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn referrers_text_finds_comments_and_strings() {
+    let dir = tempdir("referrers-text");
+    std::fs::write(
+        dir.join("A.java"),
+        "class A {\n    /** see Widget. */\n    String s = \"Widget\";\n    String t = \"Widgetry\";\n}\n",
+    )
+    .unwrap();
+    // Default is code identifiers only, so a comment/string-only name is absent.
+    let plain =
+        map::referrers(std::slice::from_ref(&dir), "Widget", &MapOptions::default()).unwrap();
+    assert_eq!(plain.occurrences, 0, "{:?}", plain.entries);
+    assert!(!plain.text);
+    // --text adds the comment and the string literal, but not the superstring.
+    let opts = MapOptions {
+        text: true,
+        ..MapOptions::default()
+    };
+    let all = map::referrers(std::slice::from_ref(&dir), "Widget", &opts).unwrap();
+    assert_eq!(all.occurrences, 2, "{:?}", all.entries);
+    assert!(all.text);
+    // --ignore-case folds ASCII across both kinds.
+    let opts = MapOptions {
+        text: true,
+        ignore_case: true,
+        ..MapOptions::default()
+    };
+    let folded = map::referrers(std::slice::from_ref(&dir), "widget", &opts).unwrap();
+    assert_eq!(folded.occurrences, 2, "{:?}", folded.entries);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn check_origin_names_the_matched_contract() {
+    let dir = tempdir("origin");
+    let java: String = (0..100).map(|i| format!("int v{i};\n")).collect();
+    std::fs::write(dir.join("Thing.java"), java).unwrap();
+    let path = dir.join("DESIGN.md");
+    std::fs::write(&path, "# Thing\n\nbody\n").unwrap();
+    // No rule: the DESIGN.md sibling heuristic names itself.
+    let sib = check_doc(&path, &Config::empty(dir.clone()), &opts()).unwrap();
+    assert_eq!(sib.origin, "siblings");
+    // A config rule with no source: skipped, and the origin names the glob.
+    let rule_doc = globset::GlobBuilder::new("DESIGN.md")
+        .literal_separator(true)
+        .build()
+        .unwrap();
+    let config = Config {
+        root: dir.clone(),
+        pairs: vec![PairRule {
+            doc: rule_doc,
+            doc_pattern: "DESIGN.md".into(),
+            source: vec![],
+            band: None,
+            comment_max: None,
+            metric: None,
+            self_check: false,
+            aggregate: false,
+            relation: Relation::default(),
+        }],
+    };
+    let r = check_doc(&path, &config, &opts()).unwrap();
+    assert_eq!(r.status, "skipped", "{r:?}");
+    assert_eq!(r.origin, "config: DESIGN.md");
     std::fs::remove_dir_all(dir).unwrap();
 }
 

@@ -82,7 +82,15 @@ fn find_body(node: Node, lang: Lang) -> Option<Node> {
     None
 }
 
-pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool, out: &mut String) {
+pub(crate) fn emit(
+    node: Node,
+    src: &str,
+    lang: Lang,
+    indent: usize,
+    docs: bool,
+    lines: bool,
+    out: &mut String,
+) {
     let kind = node.kind();
     if lang.def_kinds().contains(&kind) {
         if docs {
@@ -90,9 +98,15 @@ pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool,
         }
         let body = find_body(node, lang);
         let pad = "    ".repeat(indent);
+        let num = if lines {
+            format!("{:>5}  ", node.start_position().row + 1)
+        } else {
+            String::new()
+        };
         if lang.type_kinds().contains(&kind) && body.is_some() {
             let head = collapse(header_text(src, node, body, lang));
             let (open, close) = lang.braces();
+            out.push_str(&num);
             out.push_str(&pad);
             out.push_str(&head);
             out.push_str(open);
@@ -100,7 +114,7 @@ pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool,
             if let Some(body) = body {
                 let mut cursor = body.walk();
                 for child in body.named_children(&mut cursor) {
-                    emit(child, src, lang, indent + 1, docs, out);
+                    emit(child, src, lang, indent + 1, docs, lines, out);
                 }
             }
             if !close.is_empty() {
@@ -110,6 +124,7 @@ pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool,
             }
         } else if body.is_some() {
             let head = collapse(header_text(src, node, body, lang));
+            out.push_str(&num);
             out.push_str(&pad);
             out.push_str(&head);
             out.push_str(lang.elide());
@@ -117,6 +132,7 @@ pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool,
         } else {
             let text = collapse(header_text(src, node, None, lang));
             if !text.is_empty() {
+                out.push_str(&num);
                 out.push_str(&pad);
                 out.push_str(&text);
                 out.push('\n');
@@ -129,32 +145,39 @@ pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool,
     // their owning declaration returned above.
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        emit(child, src, lang, indent, docs, out);
+        emit(child, src, lang, indent, docs, lines, out);
     }
 }
 
 /// Render a source file as a declaration skeleton. Returns an empty string for
 /// an unparseable/plain language.
 pub fn render_source(src: &str, lang: Lang) -> Result<String> {
-    render_source_with(src, lang, false)
+    render_source_opts(src, lang, false, false)
 }
 
 /// Like [`render_source`], but when `docs` is set each declaration keeps the
 /// comment block immediately above it (its doc comment).
 pub fn render_source_with(src: &str, lang: Lang, docs: bool) -> Result<String> {
+    render_source_opts(src, lang, docs, false)
+}
+
+/// Like [`render_source_with`], but when `lines` is set each declaration line is
+/// prefixed with its 1-based source line, so a reader can jump straight to the
+/// body `read` has to open.
+pub fn render_source_opts(src: &str, lang: Lang, docs: bool, lines: bool) -> Result<String> {
     if !lang.is_parseable() || lang.is_doc() {
         return Ok(String::new());
     }
     let tree = parse(src, lang)?;
     let mut out = String::new();
-    emit(tree.root_node(), src, lang, 0, docs, &mut out);
+    emit(tree.root_node(), src, lang, 0, docs, lines, &mut out);
     Ok(out)
 }
 
 /// Render a single declaration node (and any nested members) at `indent`.
 pub(crate) fn render_def(node: Node, src: &str, lang: Lang, indent: usize, docs: bool) -> String {
     let mut out = String::new();
-    emit(node, src, lang, indent, docs, &mut out);
+    emit(node, src, lang, indent, docs, false, &mut out);
     out
 }
 
@@ -276,9 +299,18 @@ fn collect_markdown(node: Node, lines: &[&str], out: &mut BTreeMap<usize, String
 }
 
 pub fn render_markdown(src: &str, lang: Lang) -> Result<String> {
+    render_markdown_opts(src, lang, false)
+}
+
+/// Like [`render_markdown`], but when `lines` is set each skeleton line is
+/// prefixed with its 1-based source line.
+pub fn render_markdown_opts(src: &str, lang: Lang, lines: bool) -> Result<String> {
     let skeleton = markdown_skeleton(src, lang)?;
     let mut out = String::new();
-    for line in skeleton.values() {
+    for (row, line) in &skeleton {
+        if lines {
+            out.push_str(&format!("{:>5}  ", row + 1));
+        }
         out.push_str(line);
         out.push('\n');
     }

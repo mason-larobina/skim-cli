@@ -2,7 +2,7 @@
 //! directives, a `.skim.toml` rule, or the `DESIGN.md`/`README.md` sibling
 //! heuristic.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
 use globset::{Glob, GlobBuilder, GlobSetBuilder};
@@ -155,18 +155,52 @@ impl Config {
     }
 
     fn match_rule(&self, doc: &Path) -> Option<&PairRule> {
-        let rel = doc.strip_prefix(&self.root).unwrap_or(doc);
-        let rel = rel.to_string_lossy().replace('\\', "/");
+        let rel = doc_rel(&self.root, doc)?;
         self.pairs
             .iter()
             .find(|r| r.doc.compile_matcher().is_match(&rel))
     }
 
     pub fn rule_matches(&self, rule: &PairRule, doc: &Path) -> bool {
-        let rel = doc.strip_prefix(&self.root).unwrap_or(doc);
-        let rel = rel.to_string_lossy().replace('\\', "/");
-        rule.doc.compile_matcher().is_match(&rel)
+        doc_rel(&self.root, doc).is_some_and(|rel| rule.doc.compile_matcher().is_match(&rel))
     }
+}
+
+/// Make `path` absolute and lexically normalized so a config root and a scan
+/// path compare equal regardless of how each was spelled. No filesystem access:
+/// symlinks are not resolved, and `..` is folded only when the preceding
+/// component is a plain name. Without this, a config root of `/repo` never
+/// matches a doc path of `./src/...`, and every rule silently misses.
+fn absolutize(path: &Path) -> PathBuf {
+    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    let mut out = PathBuf::new();
+    for comp in joined.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(comp.as_os_str());
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// The doc path relative to the config root, `/`-separated, or `None` when the
+/// doc is outside the root. Both sides are absolutized first so `./a/b.md`,
+/// `a/b.md` and `/repo/a/b.md` all resolve to the same relative form.
+fn doc_rel(root: &Path, doc: &Path) -> Option<String> {
+    let doc = absolutize(doc);
+    let root = absolutize(root);
+    let rel = doc.strip_prefix(&root).ok()?;
+    Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
 fn find_upwards(start: &Path, name: &str) -> Option<PathBuf> {
@@ -335,6 +369,9 @@ pub struct Pair {
     pub metric: crate::metrics::Metric,
     pub self_check: bool,
     pub relation: Relation,
+    /// Where the contract came from — `config: <glob>`, `directive`, `cli`,
+    /// `siblings`, `self`, or `default` — so a mis-scoped run is self-diagnosing.
+    pub origin: String,
 }
 
 pub const DEFAULT_BAND: (f64, f64) = (4.0, 12.5);
@@ -356,14 +393,14 @@ pub fn resolve(
     let dir = doc.parent().unwrap_or_else(|| Path::new("."));
     let rule = config.match_rule(doc);
 
-    let patterns: Vec<String> = if !cli_against.is_empty() {
-        cli_against.to_vec()
+    let (patterns, mut origin): (Vec<String>, String) = if !cli_against.is_empty() {
+        (cli_against.to_vec(), "cli".to_string())
     } else if !directive.against.is_empty() {
-        directive.against.clone()
+        (directive.against.clone(), "directive".to_string())
     } else if let Some(r) = rule {
-        r.source.clone()
+        (r.source.clone(), format!("config: {}", r.doc_pattern))
     } else {
-        Vec::new()
+        (Vec::new(), "default".to_string())
     };
 
     let mut sources = if patterns.is_empty() {
@@ -383,11 +420,15 @@ pub fn resolve(
         let is_index_doc = matches!(name, "DESIGN.md" | "README.md");
         if is_index_doc {
             sources = source_siblings(dir);
+            origin = "siblings".to_string();
         }
     }
 
     let self_check =
         sources.is_empty() && (rule.map(|r| r.self_check).unwrap_or(false) || directive.self_check);
+    if self_check {
+        origin = "self".to_string();
+    }
 
     let band = cli_band
         .or(directive.band)
@@ -431,6 +472,7 @@ pub fn resolve(
         metric,
         self_check,
         relation,
+        origin,
     })
 }
 
@@ -446,6 +488,37 @@ mod tests {
         let found = find_upwards(&dir.join("a/b"), ".skim.toml").unwrap();
         assert_eq!(found, dir.join(".skim.toml"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rule_matching_ignores_how_the_doc_path_is_spelled() {
+        let root = std::env::current_dir().unwrap();
+        let doc = globset::GlobBuilder::new("src/*/DESIGN.md")
+            .literal_separator(true)
+            .build()
+            .unwrap();
+        let config = Config {
+            root: root.clone(),
+            pairs: vec![PairRule {
+                doc,
+                doc_pattern: "src/*/DESIGN.md".into(),
+                source: vec![],
+                band: None,
+                comment_max: None,
+                metric: None,
+                self_check: false,
+                aggregate: false,
+                relation: Relation::default(),
+            }],
+        };
+        // Bare relative, `./`-prefixed, and absolute must all resolve alike.
+        assert!(config.match_rule(Path::new("src/a/DESIGN.md")).is_some());
+        assert!(config.match_rule(Path::new("./src/a/DESIGN.md")).is_some());
+        assert!(config.match_rule(&root.join("src/a/DESIGN.md")).is_some());
+        // A doc outside the root has no rule.
+        assert!(config
+            .match_rule(Path::new("/elsewhere/src/a/DESIGN.md"))
+            .is_none());
     }
 
     fn tempdir() -> PathBuf {

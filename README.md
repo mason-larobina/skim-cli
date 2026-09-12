@@ -39,6 +39,7 @@ cargo install skim-cli    # installs the `skim` binary
 
 ```sh
 skim [PATHS]...            # render skeletons (default)
+skim --lines [PATHS]...    # …with each declaration's source line number
 skim --check [PATHS]...    # run the budget gate; exit 1 on any violation
 skim --count [PATHS]...    # print raw metrics, no verdict
 skim --map [PATHS]...      # a ranked repo map, within a token budget
@@ -51,10 +52,12 @@ globs. With no paths, `.` is used.
 ```sh
 skim src/                          # every source file's skeleton
 skim --docs src/foo.java           # …with each declaration's doc comment
+skim --lines --docs src/foo.java   # …and each declaration's source line
 skim 'src/**/*.java' | less        # one file's outline
 skim --map src/                    # the repo's most-referenced types
 skim --map --deps src/core src/    # …biased toward what src/core depends on
 skim --referrers FOOT_BAND src/    # every use of a name, with its scope
+skim --referrers '"Found"' --text src/   # …including comments and strings
 skim --check docs/                 # check every DESIGN.md under docs/
 skim --check --band 4,12 src/
 skim --count --json src/ | jq .
@@ -65,10 +68,13 @@ Useful flags:
 | Flag | Meaning |
 | --- | --- |
 | `--docs` | Keep each declaration's leading doc comment |
+| `--lines` | Prefix each declaration (or markdown skeleton line) with its source line |
 | `--map` | Print a ranked repo map instead of a full skeleton |
 | `--map-budget N` | Approximate token budget for `--map` (default 4096) |
 | `--focus PATH` | Bias `--map` toward this file/dir (`--deps` is an alias; repeatable) |
 | `--referrers NAME` | List every use of a name with its enclosing scope |
+| `--text` | With `--referrers`, also match comments and string literals |
+| `--ignore-case` | With `--referrers`, fold ASCII case |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
 | `--band LO,HI` | Override the band for every doc |
 | `--comment-max R` | Override the comment ceiling (0.0–1.0) |
@@ -92,6 +98,28 @@ skim --docs src/core/Program.java
 A comment that shares a line with the statement before it is a trailing comment,
 not a doc comment, and is left out. This is the flag to reach for when you need
 to know not just *what* a method is but how to call it.
+
+## Line numbers (`--lines`)
+
+A skeleton elides the bodies, so a reader who wants to open one needs its line.
+`--lines` prefixes each declaration (and each markdown skeleton line) with its
+1-based source line, so the skeleton doubles as an index into `read`:
+
+```sh
+skim --lines --docs src/core/Node.java
+```
+
+```text
+   13  /**
+       * One node of the draw list: an extent, an opacity flag, …
+       */
+   13  public abstract class Node {
+   59      public abstract Object token();
+   78      public abstract void draw(ImageBuffer target, Box2d damage, Stats stats);
+```
+
+The line is the declaration's own `start_position`, so `--lines` composes with
+`--docs` without numbering the doc block.
 
 ## Repo map (`--map`)
 
@@ -145,12 +173,21 @@ src/bobble/Bobble.java:
 It exits 1 when the name is absent, so it drops into a shell test like `grep`.
 
 The match is lexical — the same thing `grep` does — so a same-named local is
-reported too, and it only sees **code**, not comments or strings: a javadoc
-`{@link Widget}` is not a hit. What it adds over `grep` is the enclosing
+reported too, and by default it only sees **code**, not comments or strings: a
+javadoc `{@link Widget}` is not a hit and neither is the `"Found"` label a
+rename would have to change. What it adds over `grep` is the enclosing
 `Type.method`, so the result is the list of scopes to change before a rename
 rather than a pile of line numbers. Methods, fields and constants work the same
 as types, which the `--map` graph — whole types and top-level functions only —
 cannot reach.
+
+`--text` also matches comments and string literals (as whole words), which is
+what closes the rename gap; `--ignore-case` folds ASCII case on either kind:
+
+```sh
+skim --referrers Found --text src/           # the identifiers, the "Found" label and its docs
+skim --referrers foot_band --ignore-case src/
+```
 
 ## Directives
 
@@ -232,6 +269,12 @@ The comment ceiling is the aggregate share of non-blank source lines that are
 comment-only. The default is `0.5`, a gross-drift backstop rather than a style
 rule; override it per pair. A band failure is reported before a comment failure.
 
+Each result line names the contract it was checked against in brackets —
+`[config: <glob>]`, `[directive]`, `[siblings]`, `[self]`, `[cli]` — so a run
+that unexpectedly fell back to the sibling heuristic is visible instead of
+silent. A doc with no tracked source is counted in one summary line rather than
+listed; `--json` keeps the per-doc detail either way.
+
 ## Supported languages
 
 Every grammar is an optional Cargo feature, so the installed binary carries only
@@ -296,4 +339,6 @@ cargo fmt
 The test suite pins the contracts against real fixtures: body elision, the
 markdown skeleton (including that lazy continuation and blank lines are not
 index lines), sqrt and linear bands, directive overrides, the comment gate, doc
-comments, and the map's ranking and focus.
+comments, line-number prefixes, the referrer's text/case flags, the check's
+origin labels, config-rule path-spelling normalization, and the map's ranking
+and focus.
