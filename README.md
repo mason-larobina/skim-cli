@@ -66,7 +66,7 @@ Useful flags:
 | --- | --- |
 | `--docs` | Keep each declaration's leading doc comment |
 | `--map` | Print a ranked repo map instead of a full skeleton |
-| `--map-budget N` | Approximate token budget for `--map` (default 1024) |
+| `--map-budget N` | Approximate token budget for `--map` (default 4096) |
 | `--focus PATH` | Bias `--map` toward this file/dir (`--deps` is an alias; repeatable) |
 | `--referrers NAME` | List every use of a name with its enclosing scope |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |

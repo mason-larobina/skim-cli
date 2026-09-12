@@ -72,7 +72,7 @@ struct Cli {
     map: bool,
 
     /// Approximate token budget for --map (about four bytes per token).
-    #[arg(long, value_name = "N", default_value_t = 1024)]
+    #[arg(long, value_name = "N", default_value_t = 4096)]
     map_budget: usize,
 
     /// Bias --map toward these files or directories (repeatable). `--deps` is

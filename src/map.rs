@@ -32,7 +32,7 @@ impl Default for MapOptions {
         MapOptions {
             force: None,
             docs: false,
-            budget_tokens: 1024,
+            budget_tokens: 4096,
         }
     }
 }
