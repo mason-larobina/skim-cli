@@ -335,6 +335,33 @@ fn map_nodes_are_types_not_members() {
 
 #[cfg(feature = "lang-java")]
 #[test]
+fn map_balances_an_unselected_ancestor() {
+    let dir = tempdir("mapbalance");
+    std::fs::write(
+        dir.join("Outer.java"),
+        "class Outer { static class Inner {} }\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("User.java"), "class User { Inner a; Inner b; }\n").unwrap();
+    // A tight budget: Inner is referenced across files so it ranks above its
+    // outer class, which is therefore printed only as context.
+    let opts = MapOptions {
+        budget_tokens: 20,
+        ..MapOptions::default()
+    };
+    let map = map::run(std::slice::from_ref(&dir), &[], &opts).unwrap();
+    assert!(map.text.contains("class Inner"), "{}", map.text);
+    assert_eq!(
+        map.text.matches('{').count(),
+        map.text.matches('}').count(),
+        "a context-only ancestor must be closed:\n{}",
+        map.text
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
 fn map_focus_biases_the_ranking() {
     let dir = tempdir("mapfocus");
     std::fs::create_dir_all(dir.join("one")).unwrap();

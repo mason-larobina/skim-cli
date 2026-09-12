@@ -174,30 +174,54 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
     }
     let mut text = String::new();
     for &fi in &file_order {
-        let mut rows: Vec<usize> = selected
+        text.push_str(&rel(&files[fi]));
+        text.push_str(":\n");
+        let lang = opts.force.unwrap_or_else(|| Lang::from_path(&files[fi]));
+        let close = lang.braces().1;
+
+        // The printed tree is the selected defs plus whatever type ancestors
+        // they need to stay balanced. A selected type already renders its own
+        // body (and closing brace); an ancestor that is only context prints its
+        // header, its selected descendants, then its closing brace.
+        let here: Vec<usize> = selected
             .iter()
             .copied()
             .filter(|&i| defs[i].file == fi)
             .collect();
-        rows.sort_by_key(|&i| defs[i].start);
-        text.push_str(&rel(&files[fi]));
-        text.push_str(":\n");
-        let mut shown: HashSet<usize> = HashSet::new();
-        for i in rows {
-            let mut chain = Vec::new();
+        let selected_here: HashSet<usize> = here.iter().copied().collect();
+        let mut nodes: HashSet<usize> = selected_here.clone();
+        for &i in &here {
             let mut p = defs[i].parent;
             while let Some(a) = p {
-                chain.push(a);
+                if lang.type_kinds().contains(&defs[a].kind.as_str()) {
+                    nodes.insert(a);
+                }
                 p = defs[a].parent;
             }
-            for &a in chain.iter().rev() {
-                if shown.insert(a) {
-                    text.push_str(&"    ".repeat(defs[a].depth));
-                    text.push_str(&defs[a].header);
-                    text.push('\n');
+        }
+        let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut roots: Vec<usize> = Vec::new();
+        for &n in &nodes {
+            let mut p = defs[n].parent;
+            let mut tree_parent = None;
+            while let Some(a) = p {
+                if nodes.contains(&a) {
+                    tree_parent = Some(a);
+                    break;
                 }
+                p = defs[a].parent;
             }
-            text.push_str(&defs[i].rendered);
+            match tree_parent {
+                Some(a) => children.entry(a).or_default().push(n),
+                None => roots.push(n),
+            }
+        }
+        roots.sort_by_key(|&i| defs[i].start);
+        for kids in children.values_mut() {
+            kids.sort_by_key(|&i| defs[i].start);
+        }
+        for r in roots {
+            emit_tree(r, &defs, &selected_here, close, &children, &mut text);
         }
         text.push('\n');
     }
@@ -235,6 +259,37 @@ fn has_ancestor(i: usize, defs: &[Def], selected: &HashSet<usize>) -> bool {
         p = defs[a].parent;
     }
     false
+}
+
+/// Print one node of the pruned map tree. A selected node prints its own
+/// skeleton; a context-only ancestor prints its header, its selected
+/// descendants, and its closing brace.
+fn emit_tree(
+    n: usize,
+    defs: &[Def],
+    selected: &HashSet<usize>,
+    close: &str,
+    children: &HashMap<usize, Vec<usize>>,
+    out: &mut String,
+) {
+    if selected.contains(&n) {
+        out.push_str(&defs[n].rendered);
+        return;
+    }
+    let pad = "    ".repeat(defs[n].depth);
+    out.push_str(&pad);
+    out.push_str(&defs[n].header);
+    out.push('\n');
+    if let Some(kids) = children.get(&n) {
+        for &k in kids {
+            emit_tree(k, defs, selected, close, children, out);
+        }
+    }
+    if !close.is_empty() {
+        out.push_str(&pad);
+        out.push_str(close);
+        out.push('\n');
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
