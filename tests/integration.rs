@@ -248,3 +248,21 @@ fn aggregate_sums_docs_and_sources() {
     assert!((report.checks[0].ratio - 0.5).abs() < 1e-9);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn every_profile_extension_is_unique() {
+    use std::collections::HashSet;
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut has_markdown = false;
+    for p in skim::lang::PROFILES {
+        has_markdown |= p.doc && p.name == "markdown";
+        for ext in p.extensions {
+            assert!(seen.insert(ext), "extension {ext} claimed twice");
+        }
+    }
+    assert!(has_markdown, "markdown must always be compiled in");
+    assert!(
+        skim::lang::PROFILES.len() >= 2,
+        "expected at least markdown + one language"
+    );
+}

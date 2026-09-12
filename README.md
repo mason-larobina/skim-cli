@@ -58,6 +58,7 @@ Useful flags:
 | `--metric nonblank\|code\|decls` | What the band measures against |
 | `--config <FILE>` | Use this `.skim.toml` |
 | `--lang <LANG>` | Force a grammar instead of inferring it |
+| `--list-languages` | List the compiled-in languages (with `--json`) |
 | `--json` | Machine-readable output |
 
 ## Directives
@@ -175,6 +176,9 @@ back to plain text.
 Markdown is always compiled in — it is the document renderer and the language of
 the band checks. HTML/JSON/YAML/TOML carry comments but no declaration skeleton,
 so they participate in the comment ceiling and the band denominator only.
+
+`skim --list-languages` prints the build's actual set, its extensions and the
+Cargo feature that provides each.
 
 To slim the binary (markdown-only is ~3.7 MB, all languages ~34 MB):
 

@@ -52,6 +52,10 @@ struct Cli {
     /// Force a grammar instead of inferring it from the extension.
     #[arg(long, value_name = "LANG")]
     lang: Option<String>,
+
+    /// List the languages compiled into this binary and exit.
+    #[arg(long)]
+    list_languages: bool,
 }
 
 fn parse_band(s: &str) -> Result<(f64, f64), String> {
@@ -82,6 +86,10 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     let cwd = std::env::current_dir()?;
+    if cli.list_languages {
+        print_languages(cli.json)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let forced = match &cli.lang {
         Some(name) => Some(
             Lang::from_name(name).ok_or_else(|| anyhow::anyhow!("unknown language {name:?}"))?,
@@ -210,6 +218,55 @@ fn measure_path(p: &Path, forced: Option<Lang>) -> Result<metrics::FileMetrics> 
     } else {
         metrics::measure_source(&text, lang)
     }
+}
+
+#[derive(serde::Serialize)]
+struct LanguageRow {
+    name: &'static str,
+    feature: &'static str,
+    extensions: &'static [&'static str],
+    document: bool,
+}
+
+fn print_languages(json: bool) -> Result<()> {
+    let rows: Vec<LanguageRow> = skim::lang::PROFILES
+        .iter()
+        .map(|p| LanguageRow {
+            name: p.name,
+            feature: p.feature,
+            extensions: p.extensions,
+            document: p.doc,
+        })
+        .collect();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    println!(
+        "skim {} — {} languages compiled in\n",
+        env!("CARGO_PKG_VERSION"),
+        rows.len()
+    );
+    let name_w = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
+    let ext_w = rows
+        .iter()
+        .map(|r| r.extensions.join(", ").len())
+        .max()
+        .unwrap_or(0);
+    for r in &rows {
+        let exts = r.extensions.join(", ");
+        let kind = if r.document { "document" } else { "source" };
+        println!(
+            "{:<name_w$}  {:<ext_w$}  {:<8}  {}",
+            r.name,
+            exts,
+            kind,
+            r.feature,
+            name_w = name_w,
+            ext_w = ext_w,
+        );
+    }
+    Ok(())
 }
 
 fn collect_files(paths: &[PathBuf], forced: Option<Lang>) -> Vec<PathBuf> {

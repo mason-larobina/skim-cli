@@ -15,6 +15,8 @@ use tree_sitter::Language;
 
 pub struct Profile {
     pub name: &'static str,
+    /// The Cargo feature that compiles this language in (`always` for markdown).
+    pub feature: &'static str,
     /// File extensions (without the dot) this profile claims.
     pub extensions: &'static [&'static str],
     pub language: fn() -> Language,
@@ -50,6 +52,7 @@ grammar_fn!(markdown, tree_sitter_md::LANGUAGE);
 
 static MARKDOWN: Profile = Profile {
     name: "markdown",
+    feature: "always",
     extensions: &["md", "markdown"],
     language: markdown,
     def_kinds: &["atx_heading", "setext_heading"],
@@ -74,6 +77,7 @@ macro_rules! language {
         #[cfg(feature = $feature)]
         static $static: Profile = Profile {
             name: $name,
+            feature: $feature,
             extensions: $exts,
             language: $fname,
             def_kinds: $defs,
