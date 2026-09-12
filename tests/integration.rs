@@ -1,7 +1,7 @@
 //! End-to-end tests over the public API: rendering, skeleton counting, and the
 //! band/comment gate.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use skim::check::{self, check_doc, CheckOptions};
 use skim::discover::{self, Config, PairRule, Relation};
@@ -28,7 +28,7 @@ fn opts() -> CheckOptions {
 #[test]
 fn render_elides_bodies_but_keeps_signatures() {
     let src = "class A {\n    int f() { return 42; }\n    int g();\n}\n";
-    let out = render::render_source(src, Lang::Java).unwrap();
+    let out = render::render_source(src, Lang::from_path(Path::new("x.java"))).unwrap();
     assert!(out.contains("class A {"), "{out}");
     assert!(out.contains("int f() { … }"), "{out}");
     assert!(out.contains("int g();"), "{out}");
@@ -38,7 +38,7 @@ fn render_elides_bodies_but_keeps_signatures() {
 #[test]
 fn markdown_skeleton_ignores_blank_and_lazy_lines() {
     let src = "# T\n\n> a\nlazy continuation\n\nbody text\n";
-    let sk = render::markdown_skeleton(src, Lang::Markdown).unwrap();
+    let sk = render::markdown_skeleton(src, Lang::markdown()).unwrap();
     // heading + the one `>` line; the lazy line and blanks are body.
     assert_eq!(sk.len(), 2, "{sk:?}");
 }
@@ -47,7 +47,7 @@ fn markdown_skeleton_ignores_blank_and_lazy_lines() {
 fn comment_lines_are_syntax_aware() {
     // The `//` inside the string is code; the line comment is comment.
     let src = "class A {\n  String s = \"http://x\"; // tail\n  // whole\n  /* block\n     more */\n  int f() { return 1; }\n}\n";
-    let m = metrics::measure_source(src, Lang::Java).unwrap();
+    let m = metrics::measure_source(src, Lang::from_path(Path::new("x.java"))).unwrap();
     assert_eq!(m.comment, 3, "{m:?}"); // whole, block start, block end
     assert_eq!(m.code, 4, "{m:?}"); // class, String init, return, closing brace
     assert_eq!(m.decls, 3, "{m:?}"); // class + field + method
@@ -155,6 +155,38 @@ fn linear_ratio_is_plain_division() {
     assert!((Relation::Linear.ratio(50, 100) - 0.5).abs() < 1e-9);
     assert!((Relation::Sqrt.ratio(40, 100) - 4.0).abs() < 1e-9);
     assert_eq!(Metric::from_name("code"), Some(Metric::Code));
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn renders_python() {
+    let src = "class Greeter:\n    def greet(self):\n        return 1\n";
+    let out = render::render_source(src, Lang::from_path(Path::new("x.py"))).unwrap();
+    assert!(out.contains("class Greeter:"), "{out}");
+    assert!(out.contains("def greet(self):"), "{out}");
+    assert!(!out.contains("return 1"), "{out}");
+}
+
+#[cfg(feature = "lang-go")]
+#[test]
+fn renders_go_types_with_their_keyword() {
+    let src =
+        "package m\ntype Point struct {\n X int\n}\ntype Shape interface {\n Area() float64\n}\n";
+    let out = render::render_source(src, Lang::from_path(Path::new("x.go"))).unwrap();
+    assert!(out.contains("type Point struct {"), "{out}");
+    assert!(out.contains("type Shape interface {"), "{out}");
+    assert!(out.contains("X int"), "{out}");
+}
+
+#[cfg(feature = "lang-kotlin")]
+#[test]
+fn renders_kotlin_without_hoisting_members() {
+    let src = "class Widget(val n: Int) {\n    fun size(): Int { return n }\n}\n";
+    let out = render::render_source(src, Lang::from_path(Path::new("x.kt"))).unwrap();
+    assert!(out.contains("class Widget(val n: Int) {"), "{out}");
+    assert!(out.contains("fun size(): Int"), "{out}");
+    // The nested function body must stay under its own declaration.
+    assert_eq!(out.matches('{').count(), out.matches('}').count(), "{out}");
 }
 
 #[test]

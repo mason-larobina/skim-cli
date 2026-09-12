@@ -25,40 +25,94 @@ fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn header_text<'a>(src: &'a str, node: Node, body: Option<Node>) -> &'a str {
-    let end = body
+fn header_text<'a>(src: &'a str, node: Node, body: Option<Node>, lang: Lang) -> &'a str {
+    let mut end = body
         .map(|b| b.start_byte())
         .unwrap_or_else(|| node.end_byte());
+    // `type A struct {` (Go): the grammar nests the keyword inside the body
+    // node, so extend the header to the first `{` inside it.
+    if let Some(b) = body {
+        if lang.braces().0.contains('{') {
+            let text = &src[b.start_byte()..b.end_byte()];
+            if let Some(i) = text.find('{') {
+                end = b.start_byte() + i;
+            }
+        }
+    }
     &src[node.start_byte()..end]
+}
+
+/// The elidable body of a declaration: the `body` field when the grammar
+/// exposes one, otherwise (for type declarations and scan-friendly grammars) the
+/// shallowest descendant whose kind is a body kind. Shallowest keeps members
+/// inside their own declaration instead of hoisting a nested body up.
+fn find_body(node: Node, lang: Lang) -> Option<Node> {
+    if let Some(body) = node.child_by_field_name("body") {
+        return Some(body);
+    }
+    if !(lang.type_kinds().contains(&node.kind()) || lang.scan_body()) {
+        return None;
+    }
+    let kinds = lang.body_kinds();
+    let mut frontier = vec![node];
+    for _ in 0..5 {
+        let mut next = Vec::new();
+        let mut found: Option<Node> = None;
+        for n in frontier {
+            let mut cursor = n.walk();
+            for child in n.named_children(&mut cursor) {
+                if kinds.contains(&child.kind())
+                    && found
+                        .map(|f| child.start_byte() < f.start_byte())
+                        .unwrap_or(true)
+                {
+                    found = Some(child);
+                }
+                next.push(child);
+            }
+        }
+        if found.is_some() {
+            return found;
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    None
 }
 
 fn emit(node: Node, src: &str, lang: Lang, indent: usize, out: &mut String) {
     let kind = node.kind();
     if lang.def_kinds().contains(&kind) {
-        let body = node.child_by_field_name("body");
+        let body = find_body(node, lang);
         let pad = "    ".repeat(indent);
         if lang.type_kinds().contains(&kind) && body.is_some() {
-            let head = collapse(header_text(src, node, body));
+            let head = collapse(header_text(src, node, body, lang));
             let (open, close) = lang.braces();
             out.push_str(&pad);
             out.push_str(&head);
             out.push_str(open);
             out.push('\n');
             if let Some(body) = body {
-                for child in body.named_children(&mut node.walk()) {
+                let mut cursor = body.walk();
+                for child in body.named_children(&mut cursor) {
                     emit(child, src, lang, indent + 1, out);
                 }
             }
-            out.push_str(&pad);
-            out.push_str(close);
-            out.push('\n');
+            if !close.is_empty() {
+                out.push_str(&pad);
+                out.push_str(close);
+                out.push('\n');
+            }
         } else if body.is_some() {
-            let head = collapse(header_text(src, node, body));
+            let head = collapse(header_text(src, node, body, lang));
             out.push_str(&pad);
             out.push_str(&head);
-            out.push_str(" { … }\n");
+            out.push_str(lang.elide());
+            out.push('\n');
         } else {
-            let text = collapse(header_text(src, node, None));
+            let text = collapse(header_text(src, node, None, lang));
             if !text.is_empty() {
                 out.push_str(&pad);
                 out.push_str(&text);

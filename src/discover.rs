@@ -314,7 +314,7 @@ fn source_siblings(dir: &Path) -> Vec<PathBuf> {
             .path()
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| Lang::source_extensions().contains(&e.to_ascii_lowercase().as_str()))
+            .map(|e| Lang::is_source_extension(&e.to_ascii_lowercase()))
             .unwrap_or(false);
         if is_source {
             out.push(entry.path().to_path_buf());

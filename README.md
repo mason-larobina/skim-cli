@@ -142,10 +142,53 @@ rule; override it per pair. A band failure is reported before a comment failure.
 
 ## Supported languages
 
-tree-sitter grammars are compiled in for **Java** and **Markdown**. Every other
-extension is treated as plain text (non-blank line counting only). Adding a
-language means one profile in `src/lang.rs`: the grammar, its declaration node
-kinds, its type node kinds, and its comment node kinds.
+Every grammar is an optional Cargo feature, so the installed binary carries only
+the languages you ask for. The **default** enables all of them — an unfamiliar
+extension then gets real syntax-aware treatment rather than silently falling
+back to plain text.
+
+| Language | Feature | Extensions |
+| --- | --- | --- |
+| Java | `lang-java` | `.java` |
+| Python | `lang-python` | `.py`, `.pyi` |
+| JavaScript | `lang-javascript` | `.js`, `.mjs`, `.cjs`, `.jsx` |
+| TypeScript | `lang-typescript` | `.ts`, `.mts`, `.cts`, `.tsx` |
+| Rust | `lang-rust` | `.rs` |
+| Go | `lang-go` | `.go` |
+| C | `lang-c` | `.c`, `.h` |
+| C++ | `lang-cpp` | `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hh`, `.hxx` |
+| C# | `lang-csharp` | `.cs` |
+| Ruby | `lang-ruby` | `.rb`, `.rake`, `.gemspec` |
+| PHP | `lang-php` | `.php` |
+| Kotlin | `lang-kotlin` | `.kt`, `.kts` |
+| Swift | `lang-swift` | `.swift` |
+| Scala | `lang-scala` | `.scala`, `.sc`, `.sbt` |
+| Lua | `lang-lua` | `.lua` |
+| Bash | `lang-bash` | `.sh`, `.bash`, `.zsh` |
+| HTML | `lang-html` | `.html`, `.htm` |
+| CSS | `lang-css` | `.css` |
+| JSON | `lang-json` | `.json`, `.jsonc` |
+| YAML | `lang-yaml` | `.yaml`, `.yml` |
+| TOML | `lang-toml` | `.toml` |
+| Markdown | always | `.md`, `.markdown` |
+
+Markdown is always compiled in — it is the document renderer and the language of
+the band checks. HTML/JSON/YAML/TOML carry comments but no declaration skeleton,
+so they participate in the comment ceiling and the band denominator only.
+
+To slim the binary (markdown-only is ~3.7 MB, all languages ~34 MB):
+
+```sh
+# A Python- and TypeScript-only build.
+cargo install --path . --no-default-features --features lang-python,lang-typescript
+```
+
+### Adding a language
+
+One entry in `src/lang.rs`: the optional dependency and feature in `Cargo.toml`,
+a `fn` returning the grammar, a `static Profile` (declaration kinds, type kinds,
+body kinds, comment kinds, braces, elide suffix), and one `PROFILES` entry. The
+node kinds come from the grammar's `node-types.json`.
 
 ## Development
 

@@ -138,7 +138,7 @@ fn evaluate(text: &str, pair: &Pair) -> CheckReport {
 
     if pair.self_check && pair.sources.is_empty() {
         let (m, skeleton) =
-            metrics::measure_doc(text, Lang::Markdown).unwrap_or((FileMetrics::default(), 0));
+            metrics::measure_doc(text, Lang::markdown()).unwrap_or((FileMetrics::default(), 0));
         let (lo, hi) = pair.band;
         let body = m.nonblank.max(1);
         let ratio = skeleton as f64 / (body as f64).sqrt();
