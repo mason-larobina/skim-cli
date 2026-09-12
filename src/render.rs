@@ -82,9 +82,12 @@ fn find_body(node: Node, lang: Lang) -> Option<Node> {
     None
 }
 
-fn emit(node: Node, src: &str, lang: Lang, indent: usize, out: &mut String) {
+pub(crate) fn emit(node: Node, src: &str, lang: Lang, indent: usize, docs: bool, out: &mut String) {
     let kind = node.kind();
     if lang.def_kinds().contains(&kind) {
+        if docs {
+            out.push_str(&leading_comments(src, node, lang, indent));
+        }
         let body = find_body(node, lang);
         let pad = "    ".repeat(indent);
         if lang.type_kinds().contains(&kind) && body.is_some() {
@@ -97,7 +100,7 @@ fn emit(node: Node, src: &str, lang: Lang, indent: usize, out: &mut String) {
             if let Some(body) = body {
                 let mut cursor = body.walk();
                 for child in body.named_children(&mut cursor) {
-                    emit(child, src, lang, indent + 1, out);
+                    emit(child, src, lang, indent + 1, docs, out);
                 }
             }
             if !close.is_empty() {
@@ -126,20 +129,107 @@ fn emit(node: Node, src: &str, lang: Lang, indent: usize, out: &mut String) {
     // their owning declaration returned above.
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        emit(child, src, lang, indent, out);
+        emit(child, src, lang, indent, docs, out);
     }
 }
 
 /// Render a source file as a declaration skeleton. Returns an empty string for
 /// an unparseable/plain language.
 pub fn render_source(src: &str, lang: Lang) -> Result<String> {
+    render_source_with(src, lang, false)
+}
+
+/// Like [`render_source`], but when `docs` is set each declaration keeps the
+/// comment block immediately above it (its doc comment).
+pub fn render_source_with(src: &str, lang: Lang, docs: bool) -> Result<String> {
     if !lang.is_parseable() || lang.is_doc() {
         return Ok(String::new());
     }
     let tree = parse(src, lang)?;
     let mut out = String::new();
-    emit(tree.root_node(), src, lang, 0, &mut out);
+    emit(tree.root_node(), src, lang, 0, docs, &mut out);
     Ok(out)
+}
+
+/// Render a single declaration node (and any nested members) at `indent`.
+pub(crate) fn render_def(node: Node, src: &str, lang: Lang, indent: usize, docs: bool) -> String {
+    let mut out = String::new();
+    emit(node, src, lang, indent, docs, &mut out);
+    out
+}
+
+/// The contiguous run of comment siblings immediately above `node`, re-indented
+/// to `indent`. A comment that shares a line with the statement before it is a
+/// trailing comment, not a doc comment, and is ignored. Returns an empty string
+/// when there is no adjacent leading comment.
+fn leading_comments(src: &str, node: Node, lang: Lang, indent: usize) -> String {
+    let kinds = lang.comment_kinds();
+    if kinds.is_empty() {
+        return String::new();
+    }
+    let mut block: Vec<Node> = Vec::new();
+    let mut cursor = node;
+    while let Some(prev) = cursor.prev_sibling() {
+        if !kinds.contains(&prev.kind()) {
+            break;
+        }
+        // A comment on the same line as the code before it is a trailing
+        // comment of that code, not a doc comment for `node`.
+        if prev
+            .prev_sibling()
+            .is_some_and(|b| b.end_position().row >= prev.start_position().row)
+        {
+            break;
+        }
+        // A blank line between the comment and what follows breaks the run. A
+        // line comment's span may already include its trailing newline, so test
+        // the whitespace gap rather than the row numbers.
+        if src[prev.end_byte()..cursor.start_byte()]
+            .matches('\n')
+            .count()
+            > 1
+        {
+            break;
+        }
+        block.push(prev);
+        cursor = prev;
+    }
+    if block.is_empty() {
+        return String::new();
+    }
+    let pad = "    ".repeat(indent);
+    let mut out = String::new();
+    for c in block.into_iter().rev() {
+        let base = c.start_position().column;
+        // A line comment's span may include its trailing newline; drop it so the
+        // emitted block has no spurious blank line.
+        let raw = &src[c.start_byte()..c.end_byte()];
+        let text = raw.strip_suffix('\n').unwrap_or(raw);
+        for (i, line) in text.split('\n').enumerate() {
+            let line = line.trim_end();
+            let line = if i == 0 {
+                line
+            } else {
+                strip_indent(line, base)
+            };
+            if !line.is_empty() {
+                out.push_str(&pad);
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Strip up to `cols` leading whitespace characters.
+fn strip_indent(line: &str, cols: usize) -> &str {
+    for (n, (i, ch)) in line.char_indices().enumerate() {
+        if n >= cols || !ch.is_whitespace() {
+            return &line[i..];
+        }
+    }
+    ""
 }
 
 /// Skeleton of a markdown document: the heading lines and every block-quote

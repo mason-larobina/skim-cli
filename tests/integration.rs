@@ -1,12 +1,24 @@
 //! End-to-end tests over the public API: rendering, skeleton counting, and the
 //! band/comment gate.
 
-use std::path::{Path, PathBuf};
+#[cfg(any(
+    feature = "lang-java",
+    feature = "lang-python",
+    feature = "lang-go",
+    feature = "lang-kotlin",
+    feature = "lang-rust"
+))]
+use std::path::Path;
+use std::path::PathBuf;
 
 use skim::check::{self, check_doc, CheckOptions};
 use skim::discover::{self, Config, PairRule, Relation};
 use skim::lang::Lang;
-use skim::metrics::{self, Metric};
+#[cfg(feature = "lang-java")]
+use skim::map::{self, MapOptions};
+#[cfg(feature = "lang-java")]
+use skim::metrics;
+use skim::metrics::Metric;
 use skim::render;
 
 fn tempdir(tag: &str) -> PathBuf {
@@ -246,6 +258,97 @@ fn aggregate_sums_docs_and_sources() {
     assert_eq!(report.checks[0].doc_lines, 50);
     assert_eq!(report.checks[0].source_metric, 100);
     assert!((report.checks[0].ratio - 0.5).abs() < 1e-9);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn docs_keeps_leading_comment_and_skips_trailing() {
+    let src = "class A {\n    /** The answer. */\n    int f() { return 42; }\n    int g() { return 1; } // trailing\n    int h() { return 2; }\n}\n";
+    let lang = Lang::from_path(Path::new("x.java"));
+    let plain = render::render_source(src, lang).unwrap();
+    assert!(
+        !plain.contains("The answer"),
+        "docs off must drop comments: {plain}"
+    );
+    let out = render::render_source_with(src, lang, true).unwrap();
+    assert!(out.contains("/** The answer. */"), "{out}");
+    assert!(out.contains("int f()"), "{out}");
+    assert!(
+        !out.contains("trailing"),
+        "a trailing comment must not attach to the next declaration: {out}"
+    );
+}
+
+#[cfg(feature = "lang-rust")]
+#[test]
+fn docs_keeps_rust_line_doc_comment_but_not_across_a_blank() {
+    let src = "/// Doc for f.\nfn f() {}\n\n// detached\n\nfn g() {}\n";
+    let out = render::render_source_with(src, Lang::from_path(Path::new("x.rs")), true).unwrap();
+    assert!(out.contains("/// Doc for f."), "{out}");
+    assert!(
+        !out.contains("detached"),
+        "a blank line must break the doc run: {out}"
+    );
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn map_ranks_referenced_types_above_isolated_ones() {
+    let dir = tempdir("map");
+    std::fs::write(dir.join("A.java"), "class Alpha { void a() {} }\n").unwrap();
+    std::fs::write(dir.join("B.java"), "class Beta { Alpha x; Alpha y; }\n").unwrap();
+    std::fs::write(dir.join("C.java"), "class Gamma { void c() {} }\n").unwrap();
+    let map = map::run(std::slice::from_ref(&dir), &[], &MapOptions::default()).unwrap();
+    let names: Vec<&str> = map.entries.iter().map(|e| e.name.as_str()).collect();
+    let alpha = names.iter().position(|n| *n == "Alpha").expect("Alpha");
+    let gamma = names.iter().position(|n| *n == "Gamma").expect("Gamma");
+    assert!(
+        alpha < gamma,
+        "referenced type should outrank an isolated one: {names:?}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn map_nodes_are_types_not_members() {
+    let dir = tempdir("mapnodes");
+    std::fs::write(
+        dir.join("A.java"),
+        "class Alpha { int field; int helper() { return 1; } }\n",
+    )
+    .unwrap();
+    let map = map::run(std::slice::from_ref(&dir), &[], &MapOptions::default()).unwrap();
+    let names: Vec<&str> = map.entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"Alpha"), "{names:?}");
+    assert!(
+        !names.contains(&"helper"),
+        "methods are not map nodes: {names:?}"
+    );
+    assert!(
+        !names.contains(&"field"),
+        "fields are not map nodes: {names:?}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn map_focus_biases_the_ranking() {
+    let dir = tempdir("mapfocus");
+    std::fs::create_dir_all(dir.join("one")).unwrap();
+    std::fs::create_dir_all(dir.join("two")).unwrap();
+    std::fs::write(dir.join("one/A.java"), "class Alpha {}\n").unwrap();
+    std::fs::write(dir.join("two/B.java"), "class Beta {}\n").unwrap();
+    let context = vec![dir.join("two")];
+    let map = map::run(std::slice::from_ref(&dir), &context, &MapOptions::default()).unwrap();
+    assert_eq!(
+        map.entries.first().map(|e| e.name.as_str()),
+        Some("Beta"),
+        "{:?}",
+        map.entries
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 

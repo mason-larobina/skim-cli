@@ -12,5 +12,6 @@ pub mod check;
 pub mod directive;
 pub mod discover;
 pub mod lang;
+pub mod map;
 pub mod metrics;
 pub mod render;

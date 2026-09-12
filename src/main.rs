@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Parser;
 use skim::lang::Lang;
+use skim::map;
 use skim::metrics::Metric;
 use skim::{check, discover, metrics, render};
 
@@ -60,6 +61,23 @@ struct Cli {
     /// List the languages compiled into this binary and exit.
     #[arg(long)]
     list_languages: bool,
+
+    /// Keep each declaration's leading doc comment when rendering.
+    #[arg(long)]
+    docs: bool,
+
+    /// Print a ranked repo map: the definitions the scanned files reference
+    /// most, within a token budget.
+    #[arg(long)]
+    map: bool,
+
+    /// Approximate token budget for --map (about four bytes per token).
+    #[arg(long, value_name = "N", default_value_t = 1024)]
+    map_budget: usize,
+
+    /// Bias --map toward these files or directories (repeatable).
+    #[arg(long = "focus", value_name = "PATH")]
+    map_focus: Vec<PathBuf>,
 }
 
 fn parse_band(s: &str) -> Result<(f64, f64), String> {
@@ -112,6 +130,28 @@ fn run() -> Result<ExitCode> {
     } else {
         cli.paths.clone()
     };
+
+    if cli.map {
+        let context = if !cli.map_focus.is_empty() {
+            cli.map_focus.clone()
+        } else if !cli.paths.is_empty() {
+            cli.paths.clone()
+        } else {
+            Vec::new()
+        };
+        let opts = map::MapOptions {
+            force: forced,
+            docs: cli.docs,
+            budget_tokens: cli.map_budget,
+        };
+        let result = map::run(&paths, &context, &opts)?;
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&result.entries)?);
+        } else {
+            print!("{}", result.text);
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
 
     if cli.check {
         let config = discover::Config::load(cli.config.as_deref(), &cwd)?;
@@ -173,7 +213,7 @@ fn run() -> Result<ExitCode> {
         let rendered = if lang.is_doc() {
             render::render_markdown(&text, lang)?
         } else {
-            render::render_source(&text, lang)?
+            render::render_source_with(&text, lang, cli.docs)?
         };
         if multiple {
             println!("==> {} <==", p.display());

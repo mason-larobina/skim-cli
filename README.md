@@ -7,7 +7,12 @@ Syntax-aware source skimming and documentation-budget checks.
 - **Render a skeleton.** Given a source file, it prints the declarations —
   class, method and field signatures — with the bodies elided. Given a markdown
   file, it prints the heading/quote skeleton. This is the aider-style "show the
-  signatures, hide the implementation" view.
+  signatures, hide the implementation" view. `--docs` keeps each declaration's
+  doc comment as well.
+- **Map what matters.** `--map` ranks the types and top-level functions under a
+  path by how much the code references them, then prints the top of that
+  ranking within a token budget — a small, relevance-ranked skeleton of the
+  repo.
 - **Check a budget.** Given a document, it finds the source that document
   tracks and asserts that the document's size stays proportional to that source
   — on a square-root curve for a scouting index, or a straight ratio for a
@@ -35,6 +40,7 @@ cargo install skim-cli    # installs the `skim` binary
 skim [PATHS]...            # render skeletons (default)
 skim --check [PATHS]...    # run the budget gate; exit 1 on any violation
 skim --count [PATHS]...    # print raw metrics, no verdict
+skim --map [PATHS]...      # a ranked repo map, within a token budget
 ```
 
 `PATHS` may be files, directories (walked, respecting ignore files), or quoted
@@ -42,7 +48,10 @@ globs. With no paths, `.` is used.
 
 ```sh
 skim src/                          # every source file's skeleton
+skim --docs src/foo.java           # …with each declaration's doc comment
 skim 'src/**/*.java' | less        # one file's outline
+skim --map src/                    # the repo's most-referenced types
+skim --map --focus src/core src/   # …biased toward src/core
 skim --check docs/                 # check every DESIGN.md under docs/
 skim --check --band 4,12 src/
 skim --count --json src/ | jq .
@@ -52,6 +61,10 @@ Useful flags:
 
 | Flag | Meaning |
 | --- | --- |
+| `--docs` | Keep each declaration's leading doc comment |
+| `--map` | Print a ranked repo map instead of a full skeleton |
+| `--map-budget N` | Approximate token budget for `--map` (default 1024) |
+| `--focus PATH` | Bias `--map` toward this file/dir (repeatable) |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
 | `--band LO,HI` | Override the band for every doc |
 | `--comment-max R` | Override the comment ceiling (0.0–1.0) |
@@ -61,6 +74,47 @@ Useful flags:
 | `--list-languages` | List the compiled-in languages (with `--json`) |
 | `--json` | Machine-readable output |
 | `-q, --quiet` | Only failing checks and the summary |
+
+## Doc comments (`--docs`)
+
+A skeleton is signatures only. `--docs` also keeps the comment block immediately
+above each declaration — the javadoc, `#` block, or docstring header that carries
+the contract a signature cannot:
+
+```sh
+skim --docs src/core/Program.java
+```
+
+A comment that shares a line with the statement before it is a trailing comment,
+not a doc comment, and is left out. This is the flag to reach for when you need
+to know not just *what* a method is but how to call it.
+
+## Repo map (`--map`)
+
+`--map` answers "what should I look at first". It parses every source file under
+the paths, builds a reference graph (a node is a type or a top-level function;
+ an edge is an identifier reference), runs PageRank over it, and prints the
+ highest-ranked definitions within a token budget, grouped by file.
+
+```sh
+skim --map src/                                       # the repo's central types
+skim --map --focus src/core/GameProgram.java src/     # what GameProgram relies on
+skim --map --map-budget 2048 src/ --json
+```
+
+- `--focus <PATH>` biases the ranking toward those files. Without it the map is
+  the repo's global shape; with it, the map is the API surface relevant to the
+  files you named.
+- `--map-budget N` sets an approximate token ceiling (about four bytes per
+  token).
+- Ranking is at the **type** level. A class's methods and fields are part of its
+  skeleton, and their references count toward the class, so a central class
+  outranks an accessor called in a hundred places. Only types and top-level
+  functions are nodes; methods and fields are not.
+- References resolve loosely: a name defined in the same file shadows a
+  same-named definition elsewhere, and cross-file references weigh more than
+  local ones. There is no type or scope resolution — the map is a heuristic for
+  orientation, not a compiler.
 
 ## Directives
 
@@ -205,4 +259,5 @@ cargo fmt
 
 The test suite pins the contracts against real fixtures: body elision, the
 markdown skeleton (including that lazy continuation and blank lines are not
-index lines), sqrt and linear bands, directive overrides, and the comment gate.
+index lines), sqrt and linear bands, directive overrides, the comment gate, doc
+comments, and the map's ranking and focus.
