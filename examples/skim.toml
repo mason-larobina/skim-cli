@@ -1,0 +1,35 @@
+# A worked .skim.toml for a project whose infrastructure documents itself
+# through platform docs, and whose per-directory DESIGN.md files are scouting
+# indexes. `root` points at the repository; `doc` globs are relative to it.
+
+root = "/repo"
+
+# The infrastructure directories document themselves through the platform
+# docs, not their own DESIGN.md.
+[[pair]]
+doc = "src/{core,platform,tools}/DESIGN.md"
+source = []
+
+# The platform docs are one reference manual for the whole infra pool:
+# summed, and linear (~0.4 lines of doc per line of code).
+[[pair]]
+doc = "src/*.md"
+source = ["/src/core/**/*.java",
+          "/src/platform/**/*.java",
+          "/src/tools/**/*.java"]
+band = [0.3, 0.8]
+relation = "linear"
+aggregate = true
+
+# Every module's DESIGN.md is a scouting index of its own code.
+[[pair]]
+doc = "src/*/DESIGN.md"
+source = ["**/*.java"]
+band = [4.0, 12.5]
+
+# A todo item's heading/quote skeleton indexes its own body.
+[[pair]]
+doc = "todo/*_*.md"
+source = []
+self_check = true
+band = [1.5, 4.0]
