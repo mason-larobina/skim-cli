@@ -8,7 +8,7 @@ use clap::Parser;
 use skim::lang::Lang;
 use skim::map;
 use skim::metrics::Metric;
-use skim::{check, discover, metrics, render};
+use skim::{check, discover, metrics, render, search};
 
 /// Print a compressed skeleton of source files, or check that docs and comments
 /// stay within their budget.
@@ -90,6 +90,13 @@ struct Cli {
     #[arg(long, value_name = "NAME")]
     referrers: Option<String>,
 
+    /// Search the rendered skeletons for PATTERN and print each hit with its
+    /// file and source line. This greps the *index* — markdown headings and
+    /// quote lines, code declaration signatures — not the prose, so it is the
+    /// scouting pass for the concepts and modules a task touches.
+    #[arg(long, value_name = "PATTERN")]
+    grep: Option<String>,
+
     /// With --referrers, also match comments and string literals (a rename's
     /// `"Found"` label and its javadoc), not just code identifiers.
     #[arg(long)]
@@ -165,6 +172,36 @@ fn run() -> Result<ExitCode> {
             print!("{}", report.text());
         }
         return Ok(if report.occurrences == 0 {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        });
+    }
+
+    if let Some(pattern) = &cli.grep {
+        let hits = search::grep(&paths, pattern, forced, cli.docs, cli.ignore_case)?;
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&hits)?);
+        } else {
+            let mut out = String::new();
+            let mut last: Option<&str> = None;
+            let mut files = 0usize;
+            for m in &hits {
+                if last != Some(m.file.as_str()) {
+                    out.push_str(&format!("{}:\n", m.file));
+                    last = Some(m.file.as_str());
+                    files += 1;
+                }
+                out.push_str(&format!("{:>5}  {}\n", m.line, m.skeleton));
+            }
+            out.push_str(&format!(
+                "\n{} match(es) in {} file(s)\n",
+                hits.len(),
+                files
+            ));
+            print!("{out}");
+        }
+        return Ok(if hits.is_empty() {
             ExitCode::from(1)
         } else {
             ExitCode::SUCCESS

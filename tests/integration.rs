@@ -526,3 +526,30 @@ fn every_profile_extension_is_unique() {
         "expected at least markdown + one language"
     );
 }
+
+#[test]
+fn grep_matches_the_skeleton_not_the_prose() {
+    let dir = tempdir("grep-md");
+    std::fs::write(
+        dir.join("DESIGN.md"),
+        "# Widget design\n\n> The widget holds `seats`.\n\nProse mentions seats but is not the index.\n\n## Layout\n\n> Nothing here.\n",
+    )
+    .unwrap();
+    // The quote matches; the prose line does not.
+    let hits = skim::search::grep(std::slice::from_ref(&dir), "seats", None, false, false).unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].line, 3);
+    assert!(hits[0].skeleton.contains("seats"));
+    // ASCII case folding matches both the heading and the quote.
+    let folded =
+        skim::search::grep(std::slice::from_ref(&dir), "WIDGET", None, false, true).unwrap();
+    let lines: Vec<usize> = folded.iter().map(|m| m.line).collect();
+    assert_eq!(lines, vec![1, 3]);
+    // A miss is empty.
+    assert!(
+        skim::search::grep(std::slice::from_ref(&dir), "absent", None, false, false)
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

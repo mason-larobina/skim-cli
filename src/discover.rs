@@ -102,7 +102,11 @@ impl Config {
     /// Find `.skim.toml` from `explicit`, else by walking up from `start`.
     pub fn load(explicit: Option<&Path>, start: &Path) -> Result<Config> {
         let found = match explicit {
-            Some(p) => Some(p.to_path_buf()),
+            // Absolutize so the config's `root` (its own directory) is always
+            // absolute: a bare `.skim.toml` otherwise leaves `root` empty, and
+            // the aggregate source globs then run from nowhere and the check is
+            // silently skipped.
+            Some(p) => Some(absolutize(p)),
             None => find_upwards(start, ".skim.toml"),
         };
         let Some(path) = found else {
@@ -203,6 +207,11 @@ fn doc_rel(root: &Path, doc: &Path) -> Option<String> {
     Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
+/// Walk up from `start` for a file called `name`, stopping at the repository
+/// root. `.git` is a directory in the main checkout and a file in a linked
+/// worktree, so either stops the walk: a config above the repository is not
+/// this repository's config. With no repository root the walk runs to the
+/// filesystem root, as before.
 fn find_upwards(start: &Path, name: &str) -> Option<PathBuf> {
     let mut dir = if start.is_dir() {
         start.to_path_buf()
@@ -213,6 +222,9 @@ fn find_upwards(start: &Path, name: &str) -> Option<PathBuf> {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return Some(candidate);
+        }
+        if dir.join(".git").exists() {
+            return None;
         }
         if !dir.pop() {
             return None;
@@ -482,11 +494,27 @@ mod tests {
 
     #[test]
     fn finds_config_upwards() {
-        let dir = tempdir();
+        let dir = tempdir("upwards");
         std::fs::create_dir_all(dir.join("a/b")).unwrap();
         std::fs::write(dir.join(".skim.toml"), "[[pair]]\ndoc='x'\n").unwrap();
         let found = find_upwards(&dir.join("a/b"), ".skim.toml").unwrap();
         assert_eq!(found, dir.join(".skim.toml"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn config_search_stops_at_the_repository_root() {
+        let dir = tempdir("repo-root");
+        // A config above the repository is not this repository's config.
+        std::fs::write(dir.join(".skim.toml"), "[[pair]]\ndoc='x'\n").unwrap();
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("a/b")).unwrap();
+        assert_eq!(find_upwards(&repo.join("a/b"), ".skim.toml"), None);
+        // A config at the repository root is found.
+        std::fs::write(repo.join(".skim.toml"), "[[pair]]\ndoc='y'\n").unwrap();
+        let found = find_upwards(&repo.join("a/b"), ".skim.toml").unwrap();
+        assert_eq!(found, repo.join(".skim.toml"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -521,8 +549,8 @@ mod tests {
             .is_none());
     }
 
-    fn tempdir() -> PathBuf {
-        let base = std::env::temp_dir().join(format!("skim-test-{}", std::process::id()));
+    fn tempdir(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("skim-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         base
