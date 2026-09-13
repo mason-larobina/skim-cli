@@ -15,3 +15,4 @@ pub mod lang;
 pub mod map;
 pub mod metrics;
 pub mod render;
+pub mod search;

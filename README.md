@@ -44,6 +44,7 @@ skim --check [PATHS]...    # run the budget gate; exit 1 on any violation
 skim --count [PATHS]...    # print raw metrics, no verdict
 skim --map [PATHS]...      # a ranked repo map, within a token budget
 skim --referrers NAME [PATHS]...  # every use of a name, with its enclosing scope
+skim --grep PATTERN [PATHS]...    # skeleton lines matching PATTERN (the index, not prose)
 ```
 
 `PATHS` may be files, directories (walked, respecting ignore files), or quoted
@@ -73,6 +74,7 @@ Useful flags:
 | `--map-budget N` | Approximate token budget for `--map` (default 4096) |
 | `--focus PATH` | Bias `--map` toward this file/dir (`--deps` is an alias; repeatable) |
 | `--referrers NAME` | List every use of a name with its enclosing scope |
+| `--grep PATTERN` | Search the rendered skeletons (headings, quotes, signatures) for `PATTERN` |
 | `--text` | With `--referrers`, also match comments and string literals |
 | `--ignore-case` | With `--referrers`, fold ASCII case |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
@@ -189,6 +191,33 @@ skim --referrers Found --text src/           # the identifiers, the "Found" labe
 skim --referrers foot_band --ignore-case src/
 ```
 
+## Skeleton search (`--grep`)
+
+`--map` ranks what a tree *depends on*; `--referrers` finds where a name is
+*used*; `--grep` searches the **skeleton itself** — the headings and quote lines
+of every markdown file, and every code declaration signature (plus doc comments
+with `--docs`). It is `grep` over the index, not the prose: a hit names a
+concept, a design decision, or a definition, so it is the first pass for finding
+what a task touches before opening a single body.
+
+```sh
+skim --grep seat todo/ pico/          # which docs carry the seat model?
+skim --grep 'FOOT_BAND' src/          # docs and code that name a constant
+skim --grep centre-map --ignore-case pico/*.md
+```
+
+The match is a literal substring, ASCII case-folded with `--ignore-case`. Each
+hit prints the file, its 1-based source line, and the skeleton line, so it opens
+straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like grep,
+it exits 1 when nothing matches.
+
+```
+pico/BEST_PRACTICES.md:
+  140  > `core.Seats` is the lock: seat 0 is p1, pre-seated by `openedBy` and logging
+
+10 match(es) in 3 file(s)
+```
+
 ## Directives
 
 Any file may carry a `Skim:` line — in a markdown blockquote or a source
@@ -214,11 +243,14 @@ sqrt band applies.
 
 ## Configuration
 
-A `.skim.toml` at (or above) the working directory defines the contracts that no
-heuristic can guess — the platform docs that track three directories, the
-aggregate pool, the per-file exceptions. All paths are relative to the config's
-`root` (default: the config file's directory). `source` patterns are relative to
-each document's own directory unless they start with `/` (then `root`).
+A `.skim.toml` at or above the working directory, up to the repository root
+(the directory holding `.git`, which is a file in a linked worktree), defines
+the contracts that no heuristic can guess — the platform docs that track three
+directories, the aggregate pool, the per-file exceptions. The search stops at
+the repository root, so a config above the checkout is never picked up. All
+paths are relative to the config's `root` (default: the config file's
+directory). `source` patterns are relative to each document's own directory
+unless they start with `/` (then `root`).
 
 ```toml
 root = "/repo"
