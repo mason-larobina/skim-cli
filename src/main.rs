@@ -102,6 +102,14 @@ struct Cli {
     #[arg(long, value_name = "PATTERN")]
     grep: Option<String>,
 
+    /// With --grep, search raw source lines (comments and strings included)
+    /// instead of the skeleton, and label each hit with its enclosing
+    /// `Type.method`. This is the structural pass the skeleton elides: an
+    /// assignment (`x.y =`), a call shape (`new Box2d(`), a literal. Markdown
+    /// prose is not searched.
+    #[arg(long, requires = "grep")]
+    body: bool,
+
     /// Treat --grep PATTERN as a literal string, not a regular expression, so
     /// `.` and `*` match themselves (like `grep -F`).
     #[arg(short = 'F', long = "fixed-strings")]
@@ -195,34 +203,45 @@ fn run() -> Result<ExitCode> {
             ignore_case: cli.ignore_case,
             fixed_strings: cli.fixed_strings,
         };
-        let hits = search::grep(&paths, pattern, &opts)?;
-        if cli.json {
-            println!("{}", serde_json::to_string_pretty(&hits)?);
-        } else {
-            let mut out = String::new();
-            let mut last: Option<&str> = None;
-            let mut files = 0usize;
-            for m in &hits {
-                if last != Some(m.file.as_str()) {
-                    out.push_str(&format!("{}:\n", m.file));
-                    last = Some(m.file.as_str());
-                    files += 1;
-                }
-                out.push_str(&format!("{:>5}  {}\n", m.line, m.skeleton));
+        let empty = if cli.body {
+            let hits = search::grep_body(&paths, pattern, &opts)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&hits)?);
+            } else {
+                print!("{}", body_report(&hits));
             }
-            out.push_str(&format!(
-                "\n{} match(es) in {} file(s)\n",
-                hits.len(),
-                files
-            ));
-            print!("{out}");
-        }
-        if hits.is_empty() {
+            hits.is_empty()
+        } else {
+            let hits = search::grep(&paths, pattern, &opts)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&hits)?);
+            } else {
+                let mut out = String::new();
+                let mut last: Option<&str> = None;
+                let mut files = 0usize;
+                for m in &hits {
+                    if last != Some(m.file.as_str()) {
+                        out.push_str(&format!("{}:\n", m.file));
+                        last = Some(m.file.as_str());
+                        files += 1;
+                    }
+                    out.push_str(&format!("{:>5}  {}\n", m.line, m.skeleton));
+                }
+                out.push_str(&format!(
+                    "\n{} match(es) in {} file(s)\n",
+                    hits.len(),
+                    files
+                ));
+                print!("{out}");
+            }
+            hits.is_empty()
+        };
+        if empty {
             if let Some(hint) = search::zero_match_hint(pattern, cli.fixed_strings) {
                 eprintln!("{hint}");
             }
         }
-        return Ok(if hits.is_empty() {
+        return Ok(if empty {
             ExitCode::from(1)
         } else {
             ExitCode::SUCCESS
@@ -418,6 +437,33 @@ fn collect_files(paths: &[PathBuf], forced: Option<Lang>) -> Vec<PathBuf> {
         .into_iter()
         .filter(|p| forced.is_some() || Lang::from_path(p).is_parseable())
         .collect()
+}
+
+/// Human-readable `--grep --body` output: the line, its enclosing scope, and
+/// the matched source line, grouped by file.
+fn body_report(hits: &[search::BodyMatch]) -> String {
+    let mut out = String::new();
+    let mut last: Option<&str> = None;
+    let mut files = 0usize;
+    for m in hits {
+        if last != Some(m.file.as_str()) {
+            out.push_str(&format!("{}:\n", m.file));
+            last = Some(m.file.as_str());
+            files += 1;
+        }
+        let enc = if m.enclosing.is_empty() {
+            "(file scope)"
+        } else {
+            &m.enclosing
+        };
+        out.push_str(&format!("  {:<6} {:<24} {}\n", m.line, enc, m.text));
+    }
+    out.push_str(&format!(
+        "\n{} match(es) in {} file(s)\n",
+        hits.len(),
+        files
+    ));
+    out
 }
 
 fn truncate(s: &str, n: usize) -> String {

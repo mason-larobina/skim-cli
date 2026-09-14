@@ -6,6 +6,11 @@
 //! what a task touches before reading anything: which design docs carry a
 //! concept, which module declares a tool, where a rule is written down.
 //!
+//! With `body`, the same pattern is matched against each raw source line
+//! instead (comments and string literals included) and every hit is labelled
+//! with its enclosing `Type.method` — the structural patterns the skeleton
+//! elides, like an assignment or a `new T(` call.
+//!
 //! `PATTERN` is a regular expression by default, like `grep -E`; use
 //! `fixed_strings` (`--fixed-strings`) to match the pattern literally.
 
@@ -118,6 +123,60 @@ pub fn grep(paths: &[PathBuf], pattern: &str, opts: &GrepOptions) -> Result<Vec<
                     file: p.display().to_string(),
                     line,
                     skeleton,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// One raw source line matching a `--grep --body` pattern, with its scope.
+#[derive(Serialize, Debug)]
+pub struct BodyMatch {
+    pub file: String,
+    /// The 1-based source line the match is on.
+    pub line: usize,
+    /// `Type.method`, `Type`, or empty at file scope.
+    pub enclosing: String,
+    /// The matched source line (trailing whitespace trimmed).
+    pub text: String,
+}
+
+/// Every raw source line under `paths` matching `pattern`, each labelled with
+/// the definition that encloses it. Unlike [`grep`], which searches the
+/// rendered skeleton, this reads the *bodies* — including comments and string
+/// literals — so it finds the assignment (`x.y =`) or call shape (`new T(`)
+/// the skeleton elides, while keeping `--referrers`' enclosing label.
+///
+/// Markdown is skipped: its body is prose, which the enclosing label does not
+/// describe. Like `grep`, an invalid pattern fails before any I/O and the
+/// caller decides the empty-result exit code.
+pub fn grep_body(paths: &[PathBuf], pattern: &str, opts: &GrepOptions) -> Result<Vec<BodyMatch>> {
+    let files: Vec<PathBuf> = discover::expand(paths)
+        .into_iter()
+        .filter(|p| {
+            let lang = opts.force.unwrap_or_else(|| Lang::from_path(p));
+            lang.is_parseable() && !lang.is_doc()
+        })
+        .collect();
+    let matcher = Matcher::new(pattern, opts.ignore_case, opts.fixed_strings)?;
+    let mut out = Vec::new();
+    for p in &files {
+        let text =
+            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
+        let lang = opts.force.unwrap_or_else(|| Lang::from_path(p));
+        let tree = render::parse(&text, lang)?;
+        let scopes = crate::map::enclosing_by_line(tree.root_node(), &text, lang);
+        for (row, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if matcher.is_match(line) {
+                out.push(BodyMatch {
+                    file: p.display().to_string(),
+                    line: row + 1,
+                    enclosing: scopes.get(row).cloned().unwrap_or_default(),
+                    text: line.trim_end().to_string(),
                 });
             }
         }

@@ -615,6 +615,59 @@ fn is_string_kind(kind: &str) -> bool {
     kind.contains("string") || kind.contains("char") || kind == "quoted_attribute_value"
 }
 
+/// For each 0-based source line, the innermost enclosing definition's label
+/// (`Type.method`, `Type`, or empty at file scope). A `--grep --body` hit uses
+/// this to say which scope it belongs to, the way `--referrers` does.
+pub(crate) fn enclosing_by_line(root: Node, src: &str, lang: Lang) -> Vec<String> {
+    let mut spans: Vec<(usize, usize, String)> = Vec::new();
+    collect_def_spans(root, src, lang, None, &mut spans);
+    let lines = src.lines().count();
+    let mut out = vec![String::new(); lines];
+    // Widest-first, so a nested definition overwrites the ancestors that
+    // contain it and the innermost scope wins.
+    spans.sort_by_key(|(start, end, _)| std::cmp::Reverse(end.saturating_sub(*start)));
+    for (start, end, label) in spans {
+        let stop = end.min(lines.saturating_sub(1));
+        for slot in out.iter_mut().take(stop + 1).skip(start) {
+            *slot = label.clone();
+        }
+    }
+    out
+}
+
+fn collect_def_spans(
+    node: Node,
+    src: &str,
+    lang: Lang,
+    enc: Option<&str>,
+    out: &mut Vec<(usize, usize, String)>,
+) {
+    let name_node = if lang.def_kinds().contains(&node.kind()) {
+        def_name_node(node, src)
+    } else {
+        None
+    };
+    let label = name_node.map(|n| {
+        let n = &src[n.start_byte()..n.end_byte()];
+        match enc {
+            Some(e) => format!("{e}.{n}"),
+            None => n.to_string(),
+        }
+    });
+    if let Some(label) = &label {
+        out.push((
+            node.start_position().row,
+            node.end_position().row,
+            label.clone(),
+        ));
+    }
+    let enc = label.as_deref().or(enc);
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_def_spans(child, src, lang, enc, out);
+    }
+}
+
 /// The byte offset of `symbol` in `text` as a whole word, optionally ASCII
 /// case-insensitively. Whole-word matching keeps `--text` a rename tool rather
 /// than a substring search: `Found` hits `"Found"` and `Found/Best`, not

@@ -710,3 +710,51 @@ fn referrers_marks_the_declaration_and_names_impls() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn grep_body_labels_a_structural_pattern_the_skeleton_elides() {
+    let dir = tempdir("grep-body");
+    std::fs::write(
+        dir.join("Thing.java"),
+        "class Thing {\n    void run() {\n        Box2d b = new Box2d();\n        b.bounds = compute();\n    }\n}\n",
+    )
+    .unwrap();
+    let body = |pat: &str| {
+        skim::search::grep_body(
+            std::slice::from_ref(&dir),
+            pat,
+            &GrepOptions {
+                ..GrepOptions::default()
+            },
+        )
+        .unwrap()
+    };
+    // The skeleton search cannot see a body statement ...
+    let skel = skim::search::grep(
+        std::slice::from_ref(&dir),
+        "new Box2d",
+        &grep_opts(false, false),
+    )
+    .unwrap();
+    assert!(skel.is_empty(), "{skel:?}");
+    // ... but the body search finds the call, labelled with its method.
+    let ctor = body("new Box2d\\(");
+    assert_eq!(ctor.len(), 1, "{ctor:?}");
+    assert_eq!(ctor[0].line, 3);
+    assert_eq!(ctor[0].enclosing, "Thing.run");
+    // An assignment pattern, matched literally with --fixed-strings.
+    let assign = skim::search::grep_body(
+        std::slice::from_ref(&dir),
+        "b.bounds =",
+        &GrepOptions {
+            fixed_strings: true,
+            ..GrepOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(assign.len(), 1, "{assign:?}");
+    assert_eq!(assign[0].line, 4);
+    assert_eq!(assign[0].enclosing, "Thing.run");
+    std::fs::remove_dir_all(dir).unwrap();
+}

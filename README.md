@@ -45,6 +45,7 @@ skim --count [PATHS]...    # print raw metrics, no verdict
 skim --map [PATHS]...      # a ranked repo map, within a token budget
 skim --referrers NAME [PATHS]...  # every use of a name, with its enclosing scope
 skim --grep PATTERN [PATHS]...    # skeleton lines matching regex PATTERN (the index, not prose)
+skim --grep PATTERN --body [PATHS]...  # raw source lines matching PATTERN, with their enclosing scope
 ```
 
 `PATHS` may be files, directories (walked, respecting ignore files), or quoted
@@ -75,6 +76,7 @@ Useful flags:
 | `--focus PATH` | Bias `--map` toward this file/dir (`--deps` is an alias; repeatable) |
 | `--referrers NAME` | List every use of a name with its enclosing scope |
 | `--grep PATTERN` | Search the rendered skeletons (headings, quotes, signatures) for regex `PATTERN` |
+| `--body` | With `--grep`, search raw source lines (bodies, comments, strings) and label each hit with its enclosing scope |
 | `--fixed-strings`, `-F` | Treat `--grep PATTERN` as a literal string, not a regular expression |
 | `--text` | With `--referrers`, also match comments and string literals |
 | `--ignore-case`, `-i` | Fold case for `--grep` and `--referrers` |
@@ -235,6 +237,39 @@ pico/BEST_PRACTICES.md:
 
 10 match(es) in 3 file(s)
 ```
+
+### Body search (`--grep --body`)
+
+The skeleton elides bodies, so `--grep` cannot see a statement. `--body`
+matching the same `PATTERN`, but against every raw source line — comments and
+string literals included — and labels each hit with the `Type.method` that
+contains it. This is the structural pass: find every assignment (`x.y =`),
+every call shape (`new Box2d(`), every use of a literal, across the tree, with
+the scope to change rather than a pile of line numbers.
+
+```sh
+skim --grep 'new Box2d\(' --body src/       # every construction site
+skim --grep 'b\.bounds\s*=' --body src/     # every assignment to the field
+skim --grep 'anchorBox =' -F --body src/    # a literal statement
+```
+
+It reuses `-i`/`-F`, the ERE semantics, and the exit codes of `--grep`; the
+pattern is a regex by default. `--grep`'s pattern comes first — write
+`--grep PATTERN --body` (or `--body --grep PATTERN`), not `--grep --body
+PATTERN`. The match is line-oriented, like `grep`, so `^`/`$` anchor to the line
+(indentation included). Markdown is skipped — its body is prose, which the
+enclosing label does not describe.
+
+```
+src/core/Bobble.java:
+  217    Bobble.layout            anchorBox = new Box2d();
+  335    Bobble.layout            this.anchorBox = layout.anchorBox;
+
+2 match(es) in 1 file(s)
+```
+
+`--json` emits `{file, line, enclosing, text}` objects, so a script gets the
+scope and the matched line without parsing the rendered columns.
 
 ## Directives
 
