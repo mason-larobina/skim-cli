@@ -11,8 +11,17 @@ use crate::discover::{self, Config, Pair};
 use crate::lang::Lang;
 use crate::metrics::{self, FileMetrics, Metric};
 
-/// Aggregate comment share for a pair's source set, plus the worst single file
-/// for context.
+/// One source file whose own comment share exceeds the ceiling.
+#[derive(Serialize, Debug)]
+pub struct OverFile {
+    pub file: String,
+    pub ratio: f64,
+    pub comment_lines: usize,
+    pub nonblank: usize,
+}
+
+/// Aggregate comment share for a pair's source set, plus the per-file offenders
+/// that actually trip the ceiling.
 #[derive(Serialize, Debug)]
 pub struct CommentReport {
     pub ratio: f64,
@@ -21,6 +30,8 @@ pub struct CommentReport {
     pub nonblank: usize,
     pub worst_file: Option<String>,
     pub worst_ratio: f64,
+    /// Files over `max` (each with `nonblank >= comment_min`), worst first.
+    pub over: Vec<OverFile>,
 }
 
 #[derive(Serialize, Debug)]
@@ -58,6 +69,7 @@ pub struct CheckOptions {
     pub cli_against: Vec<String>,
     pub cli_band: Option<(f64, f64)>,
     pub cli_comment_max: Option<f64>,
+    pub cli_comment_min: Option<usize>,
     pub metric: Option<Metric>,
 }
 
@@ -75,6 +87,7 @@ pub fn check_doc(doc: &Path, config: &Config, opts: &CheckOptions) -> Result<Che
         &opts.cli_against,
         opts.cli_band,
         opts.cli_comment_max,
+        opts.cli_comment_min,
     )?;
     Ok(evaluate(&text, &pair))
 }
@@ -109,10 +122,15 @@ fn status_name(s: Status) -> &'static str {
     }
 }
 
-fn comment_report(metrics: &[(PathBuf, FileMetrics)], max: f64) -> CommentReport {
+fn comment_report(
+    metrics: &[(PathBuf, FileMetrics)],
+    max: f64,
+    min_source: usize,
+) -> CommentReport {
     let mut comment_lines = 0;
     let mut nonblank = 0;
     let mut worst: Option<(&PathBuf, f64)> = None;
+    let mut over: Vec<OverFile> = Vec::new();
     for (path, m) in metrics {
         comment_lines += m.comment;
         nonblank += m.nonblank;
@@ -120,7 +138,20 @@ fn comment_report(metrics: &[(PathBuf, FileMetrics)], max: f64) -> CommentReport
         if worst.as_ref().map(|(_, w)| ratio > *w).unwrap_or(true) {
             worst = Some((path, ratio));
         }
+        if m.nonblank >= min_source && ratio > max {
+            over.push(OverFile {
+                file: path.display().to_string(),
+                ratio,
+                comment_lines: m.comment,
+                nonblank: m.nonblank,
+            });
+        }
     }
+    over.sort_by(|a, b| {
+        b.ratio
+            .partial_cmp(&a.ratio)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let ratio = if nonblank == 0 {
         0.0
     } else {
@@ -133,6 +164,7 @@ fn comment_report(metrics: &[(PathBuf, FileMetrics)], max: f64) -> CommentReport
         nonblank,
         worst_file: worst.map(|(p, _)| p.display().to_string()),
         worst_ratio: worst.map(|(_, r)| r).unwrap_or(0.0),
+        over,
     }
 }
 
@@ -204,8 +236,13 @@ fn evaluate(text: &str, pair: &Pair) -> CheckReport {
 
     let (lo, hi) = pair.band;
     let ratio = pair.relation.ratio(doc_lines, source_metric);
-    let comment = pair.comment_max.map(|max| comment_report(&measured, max));
-    let comment_over = comment.as_ref().map(|c| c.ratio > c.max).unwrap_or(false);
+    let comment = pair
+        .comment_max
+        .map(|max| comment_report(&measured, max, pair.comment_min));
+    let comment_over = comment
+        .as_ref()
+        .map(|c| !c.over.is_empty())
+        .unwrap_or(false);
     let status = classify(ratio, (lo, hi), comment_over);
 
     CheckReport {
@@ -241,7 +278,7 @@ pub fn run(paths: &[PathBuf], config: &Config, opts: &CheckOptions) -> Result<Re
         for d in &matched {
             consumed.insert((*d).clone());
         }
-        if let Some(report) = evaluate_aggregate(rule, &matched, config) {
+        if let Some(report) = evaluate_aggregate(rule, &matched, config, opts) {
             checks.push(report);
         }
     }
@@ -268,6 +305,7 @@ fn evaluate_aggregate(
     rule: &crate::discover::PairRule,
     docs: &[&PathBuf],
     config: &Config,
+    opts: &CheckOptions,
 ) -> Option<CheckReport> {
     let mut doc_lines = 0usize;
     for d in docs {
@@ -299,10 +337,21 @@ fn evaluate_aggregate(
     if source_metric == 0 {
         return None;
     }
-    let (lo, hi) = rule.band.unwrap_or(discover::DEFAULT_BAND);
+    let (lo, hi) = opts
+        .cli_band
+        .or(rule.band)
+        .unwrap_or(discover::DEFAULT_BAND);
     let ratio = rule.relation.ratio(doc_lines, source_metric);
-    let comment = rule.comment_max.map(|max| comment_report(&measured, max));
-    let comment_over = comment.as_ref().map(|c| c.ratio > c.max).unwrap_or(false);
+    let comment = comment_report(
+        &measured,
+        opts.cli_comment_max
+            .or(rule.comment_max)
+            .unwrap_or(discover::DEFAULT_COMMENT_MAX),
+        opts.cli_comment_min
+            .or(rule.comment_min)
+            .unwrap_or(discover::DEFAULT_COMMENT_MIN_SOURCE),
+    );
+    let comment_over = !comment.over.is_empty();
     let status = classify(ratio, (lo, hi), comment_over);
     Some(CheckReport {
         doc: format!("{} ({} docs, aggregate)", rule.doc_pattern, docs.len()),
@@ -316,7 +365,7 @@ fn evaluate_aggregate(
         status: status_name(status).to_string(),
         self_check: false,
         origin: format!("config: {} (aggregate)", rule.doc_pattern),
-        comment,
+        comment: Some(comment),
     })
 }
 
@@ -368,16 +417,23 @@ pub fn print_human(report: &Report, quiet: bool) {
             );
         }
         if let Some(cm) = &c.comment {
-            if cm.ratio > cm.max {
-                let worst = cm
-                    .worst_file
-                    .as_deref()
-                    .map(|f| format!(" worst {f} {:.2}", cm.worst_ratio))
-                    .unwrap_or_default();
+            if !cm.over.is_empty() {
                 println!(
-                    "       comment ceiling: {:.2} > {:.2} ({}/{} nonblank){}",
-                    cm.ratio, cm.max, cm.comment_lines, cm.nonblank, worst
+                    "       comment ceiling {:.2}: {} file(s) over ({}/{} nonblank overall)",
+                    cm.max,
+                    cm.over.len(),
+                    cm.comment_lines,
+                    cm.nonblank
                 );
+                for o in cm.over.iter().take(10) {
+                    println!(
+                        "         {:.2}  {}/{}  {}",
+                        o.ratio, o.comment_lines, o.nonblank, o.file
+                    );
+                }
+                if cm.over.len() > 10 {
+                    println!("         ... {} more", cm.over.len() - 10);
+                }
             }
         }
     }

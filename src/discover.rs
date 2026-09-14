@@ -61,6 +61,7 @@ struct RawPair {
     source: Vec<String>,
     band: Option<[f64; 2]>,
     comment_max: Option<f64>,
+    comment_min: Option<usize>,
     #[serde(default)]
     metric: Option<String>,
     #[serde(default)]
@@ -79,6 +80,7 @@ pub struct PairRule {
     pub source: Vec<String>,
     pub band: Option<(f64, f64)>,
     pub comment_max: Option<f64>,
+    pub comment_min: Option<usize>,
     pub metric: Option<crate::metrics::Metric>,
     pub self_check: bool,
     pub aggregate: bool,
@@ -142,6 +144,7 @@ impl Config {
                 source: p.source,
                 band: p.band.map(|b| (b[0], b[1])),
                 comment_max: p.comment_max,
+                comment_min: p.comment_min,
                 metric: p
                     .metric
                     .as_deref()
@@ -378,6 +381,7 @@ pub struct Pair {
     pub sources: Vec<PathBuf>,
     pub band: (f64, f64),
     pub comment_max: Option<f64>,
+    pub comment_min: usize,
     pub metric: crate::metrics::Metric,
     pub self_check: bool,
     pub relation: Relation,
@@ -388,8 +392,13 @@ pub struct Pair {
 
 pub const DEFAULT_BAND: (f64, f64) = (4.0, 12.5);
 pub const DEFAULT_SELF_BAND: (f64, f64) = (1.5, 4.0);
-/// Gross-drift ceiling on comment share of non-blank source lines.
+/// Gross-drift ceiling on a single source file's comment share of its
+/// non-blank lines (linear, per file, not the pair aggregate).
 pub const DEFAULT_COMMENT_MAX: f64 = 0.5;
+/// Minimum non-blank source lines before the per-file comment ceiling is
+/// asserted: below it a small file's share is dominated by its header and
+/// does not describe a drift.
+pub const DEFAULT_COMMENT_MIN_SOURCE: usize = 100;
 
 /// Resolve one doc path into a [`Pair`]. `cli_against` and `cli_band` override
 /// everything; directives override the config; the config overrides the
@@ -401,6 +410,7 @@ pub fn resolve(
     cli_against: &[String],
     cli_band: Option<(f64, f64)>,
     cli_comment_max: Option<f64>,
+    cli_comment_min: Option<usize>,
 ) -> Result<Pair> {
     let dir = doc.parent().unwrap_or_else(|| Path::new("."));
     let rule = config.match_rule(doc);
@@ -466,6 +476,11 @@ pub fn resolve(
         })
     };
 
+    let comment_min = cli_comment_min
+        .or(directive.comment_min)
+        .or_else(|| rule.and_then(|r| r.comment_min))
+        .unwrap_or(DEFAULT_COMMENT_MIN_SOURCE);
+
     let metric = directive
         .metric
         .or_else(|| rule.and_then(|r| r.metric))
@@ -481,6 +496,7 @@ pub fn resolve(
         sources,
         band,
         comment_max,
+        comment_min,
         metric,
         self_check,
         relation,
@@ -533,6 +549,7 @@ mod tests {
                 source: vec![],
                 band: None,
                 comment_max: None,
+                comment_min: None,
                 metric: None,
                 self_check: false,
                 aggregate: false,

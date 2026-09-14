@@ -38,6 +38,10 @@ struct Cli {
     #[arg(long, value_name = "RATIO")]
     comment_max: Option<f64>,
 
+    /// Minimum non-blank source lines before the comment ceiling applies.
+    #[arg(long, value_name = "N")]
+    comment_min: Option<usize>,
+
     /// Source metric the band is measured against: nonblank, code, or decls.
     #[arg(long, value_name = "METRIC")]
     metric: Option<String>,
@@ -237,6 +241,7 @@ fn run() -> Result<ExitCode> {
             cli_against: cli.against.clone(),
             cli_band: cli.band,
             cli_comment_max: cli.comment_max,
+            cli_comment_min: cli.comment_min,
             metric,
         };
         let report = check::run(&paths, &config, &opts)?;

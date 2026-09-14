@@ -33,6 +33,7 @@ fn opts() -> CheckOptions {
         cli_against: vec![],
         cli_band: None,
         cli_comment_max: None,
+        cli_comment_min: None,
         metric: None,
     }
 }
@@ -158,6 +159,7 @@ fn comment_ceiling_fires() {
     // Wide band isolates the comment failure.
     let o = CheckOptions {
         cli_comment_max: Some(0.3),
+        cli_comment_min: Some(0),
         cli_band: Some((0.0, 1000.0)),
         ..opts()
     };
@@ -165,6 +167,44 @@ fn comment_ceiling_fires() {
     let r = check_doc(&path, &config, &o).unwrap();
     assert_eq!(r.status, "comments", "{r:?}");
     assert!(r.comment.unwrap().ratio > 0.3);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "lang-java")]
+#[test]
+fn comment_ceiling_is_per_file_not_aggregate() {
+    let dir = tempdir("comments-per-file");
+    // One clean file plus one saturated file: the pair aggregate stays under
+    // the ceiling while the saturated file alone exceeds it.
+    let mut clean = String::new();
+    for i in 0..300 {
+        clean.push_str(&format!("int v{i};\n"));
+    }
+    std::fs::write(dir.join("Clean.java"), &clean).unwrap();
+    let mut hot = String::new();
+    for _ in 0..40 {
+        hot.push_str("// c\n");
+        hot.push_str("int x;\n");
+    }
+    for i in 0..40 {
+        hot.push_str(&format!("// extra {i}\n"));
+    }
+    std::fs::write(dir.join("Hot.java"), &hot).unwrap();
+    let path = dir.join("DESIGN.md");
+    std::fs::write(&path, "# Thing\n\nbody\n").unwrap();
+    let o = CheckOptions {
+        cli_comment_max: Some(0.5),
+        cli_comment_min: Some(50),
+        cli_band: Some((0.0, 1000.0)),
+        ..opts()
+    };
+    let config = Config::empty(dir.clone());
+    let r = check_doc(&path, &config, &o).unwrap();
+    assert_eq!(r.status, "comments", "{r:?}");
+    let cm = r.comment.unwrap();
+    assert!(cm.ratio < 0.5, "aggregate must be under: {cm:?}");
+    assert_eq!(cm.over.len(), 1, "{cm:?}");
+    assert!(cm.over[0].file.ends_with("Hot.java"), "{cm:?}");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -246,6 +286,7 @@ fn aggregate_sums_docs_and_sources() {
             source: vec!["src/**/*.java".into()],
             band: Some((0.4, 0.6)),
             comment_max: None,
+            comment_min: None,
             metric: None,
             self_check: false,
             aggregate: true,
@@ -482,6 +523,7 @@ fn check_origin_names_the_matched_contract() {
             source: vec![],
             band: None,
             comment_max: None,
+            comment_min: None,
             metric: None,
             self_check: false,
             aggregate: false,

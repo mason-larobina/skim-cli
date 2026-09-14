@@ -80,6 +80,7 @@ Useful flags:
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
 | `--band LO,HI` | Override the band for every doc |
 | `--comment-max R` | Override the comment ceiling (0.0–1.0) |
+| `--comment-min N` | Only assert the comment ceiling above N non-blank source lines |
 | `--metric nonblank\|code\|decls` | What the band measures against |
 | `--config <FILE>` | Use this `.skim.toml` |
 | `--lang <LANG>` | Force a grammar instead of inferring it |
@@ -228,6 +229,7 @@ comment. Multiple lines accumulate.
 > Skim: src/abc.java, src/def/**             # tracked source
 > Skim: [0.3, 0.8] relation linear           # a reference manual, not an index
 > Skim: comments 0.4                         # comment ceiling
+> Skim: comment-min 200                      # …asserted only above 200 non-blank lines
 > Skim: comments off                         # disable the comment check
 > Skim: metric code                          # count code lines, not non-blank
 > Skim: self                                 # check this file's own skeleton
@@ -260,6 +262,8 @@ root = "/repo"
 doc = "src/**/DESIGN.md"
 source = ["**/*.java"]
 band = [4.0, 12.5]
+comment_max = 0.5
+comment_min = 100
 
 # Many docs measured as one summed pool, linearly against a source set.
 [[pair]]
@@ -297,9 +301,14 @@ For a document with `D` non-blank lines and a source set measured at `S`:
 `nonblank` (default, every non-blank line), `code` (non-blank lines that are not
 comment-only), or `decls` (declaration count).
 
-The comment ceiling is the aggregate share of non-blank source lines that are
-comment-only. The default is `0.5`, a gross-drift backstop rather than a style
-rule; override it per pair. A band failure is reported before a comment failure.
+The comment ceiling is per **file**, not the pair aggregate: a source file whose
+own comment-only lines exceed `comment_max` of its non-blank lines (a linear
+`C/S`) trips it. A small file's share is dominated by its header and the parse's
+comment kinds, so a file below `comment_min` non-blank lines is not asserted; the
+defaults are `0.5` and `100`, and a float `C/S` is the only relation that fits
+the comment data (a sqrt normalizer tracks codebase size, not comment density).
+The pair aggregate is still reported for context. A band failure is reported
+before a comment failure.
 
 Each result line names the contract it was checked against in brackets —
 `[config: <glob>]`, `[directive]`, `[siblings]`, `[self]`, `[cli]` — so a run

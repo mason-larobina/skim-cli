@@ -22,6 +22,7 @@ pub struct Directive {
     pub band: Option<(f64, f64)>,
     pub against: Vec<String>,
     pub comment_max: Option<f64>,
+    pub comment_min: Option<usize>,
     pub comment_off: bool,
     pub metric: Option<Metric>,
     pub relation: Option<Relation>,
@@ -35,6 +36,7 @@ impl Directive {
         self.band.is_none()
             && self.against.is_empty()
             && self.comment_max.is_none()
+            && self.comment_min.is_none()
             && !self.comment_off
             && self.metric.is_none()
             && self.relation.is_none()
@@ -49,6 +51,9 @@ impl Directive {
         if other.comment_max.is_some() {
             self.comment_max = other.comment_max;
         }
+        if other.comment_min.is_some() {
+            self.comment_min = other.comment_min;
+        }
         self.comment_off |= other.comment_off;
         if other.metric.is_some() {
             self.metric = other.metric;
@@ -61,7 +66,14 @@ impl Directive {
 }
 
 const KEYWORDS: &[&str] = &[
-    "against", "comments", "comment", "metric", "relation", "self",
+    "against",
+    "comments",
+    "comment",
+    "comment-min",
+    "min",
+    "metric",
+    "relation",
+    "self",
 ];
 
 /// Extract the raw payload of a `Skim:` line, if the line is one.
@@ -143,6 +155,15 @@ fn parse_payload(text: &str, d: &mut Directive) {
                                 d.comment_max = Some(r);
                             }
                         }
+                    }
+                    i += 1;
+                }
+            }
+            "comment-min" | "min" => {
+                i += 1;
+                if i < tokens.len() {
+                    if let Ok(n) = tokens[i].parse() {
+                        d.comment_min = Some(n);
                     }
                     i += 1;
                 }
