@@ -20,6 +20,7 @@ use skim::map::{self, MapOptions};
 use skim::metrics;
 use skim::metrics::Metric;
 use skim::render;
+use skim::search::GrepOptions;
 
 fn tempdir(tag: &str) -> PathBuf {
     let base = std::env::temp_dir().join(format!("skim-it-{}-{}", std::process::id(), tag));
@@ -569,6 +570,14 @@ fn every_profile_extension_is_unique() {
     );
 }
 
+fn grep_opts(ignore_case: bool, fixed_strings: bool) -> GrepOptions {
+    GrepOptions {
+        ignore_case,
+        fixed_strings,
+        ..GrepOptions::default()
+    }
+}
+
 #[test]
 fn grep_matches_the_skeleton_not_the_prose() {
     let dir = tempdir("grep-md");
@@ -578,20 +587,74 @@ fn grep_matches_the_skeleton_not_the_prose() {
     )
     .unwrap();
     // The quote matches; the prose line does not.
-    let hits = skim::search::grep(std::slice::from_ref(&dir), "seats", None, false, false).unwrap();
+    let hits = skim::search::grep(
+        std::slice::from_ref(&dir),
+        "seats",
+        &grep_opts(false, false),
+    )
+    .unwrap();
     assert_eq!(hits.len(), 1, "{hits:?}");
     assert_eq!(hits[0].line, 3);
     assert!(hits[0].skeleton.contains("seats"));
-    // ASCII case folding matches both the heading and the quote.
-    let folded =
-        skim::search::grep(std::slice::from_ref(&dir), "WIDGET", None, false, true).unwrap();
+    // Case folding matches both the heading and the quote.
+    let folded = skim::search::grep(
+        std::slice::from_ref(&dir),
+        "WIDGET",
+        &grep_opts(true, false),
+    )
+    .unwrap();
     let lines: Vec<usize> = folded.iter().map(|m| m.line).collect();
     assert_eq!(lines, vec![1, 3]);
     // A miss is empty.
-    assert!(
-        skim::search::grep(std::slice::from_ref(&dir), "absent", None, false, false)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(skim::search::grep(
+        std::slice::from_ref(&dir),
+        "absent",
+        &grep_opts(false, false)
+    )
+    .unwrap()
+    .is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn grep_treats_the_pattern_as_a_regex_by_default() {
+    let dir = tempdir("grep-regex");
+    std::fs::write(
+        dir.join("DESIGN.md"),
+        "# Widget design\n\n> The widget holds `seats`.\n\n> A seat is a row.\n",
+    )
+    .unwrap();
+    let regex = |pat: &str| {
+        skim::search::grep(std::slice::from_ref(&dir), pat, &grep_opts(false, false)).unwrap()
+    };
+    // `.` is a wildcard: `s.ats` matches `seats`.
+    let wild = regex("s.ats");
+    assert_eq!(wild.len(), 1, "{wild:?}");
+    assert_eq!(wild[0].line, 3);
+    // Alternation and `^` anchoring select the heading only.
+    let alt: Vec<usize> = regex("Widget|Layout").iter().map(|m| m.line).collect();
+    assert_eq!(alt, vec![1]);
+    let anchored = regex("^# Widget");
+    assert_eq!(anchored.len(), 1, "{anchored:?}");
+    assert_eq!(anchored[0].line, 1);
+    // The same metacharacters are literal under --fixed-strings, so `s.ats`
+    // no longer matches the quote.
+    let literal =
+        skim::search::grep(std::slice::from_ref(&dir), "s.ats", &grep_opts(false, true)).unwrap();
+    assert!(literal.is_empty(), "{literal:?}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn grep_rejects_an_invalid_regex_but_accepts_it_literally() {
+    let dir = tempdir("grep-bad");
+    std::fs::write(dir.join("DESIGN.md"), "# T\n\n> (a seat)\n").unwrap();
+    let err =
+        skim::search::grep(std::slice::from_ref(&dir), "(", &grep_opts(false, false)).unwrap_err();
+    assert!(err.to_string().contains("invalid --grep pattern"), "{err}");
+    // As a fixed string, `(` is just a character.
+    let hits =
+        skim::search::grep(std::slice::from_ref(&dir), "(", &grep_opts(false, true)).unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
     std::fs::remove_dir_all(dir).unwrap();
 }

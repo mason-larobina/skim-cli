@@ -44,7 +44,7 @@ skim --check [PATHS]...    # run the budget gate; exit 1 on any violation
 skim --count [PATHS]...    # print raw metrics, no verdict
 skim --map [PATHS]...      # a ranked repo map, within a token budget
 skim --referrers NAME [PATHS]...  # every use of a name, with its enclosing scope
-skim --grep PATTERN [PATHS]...    # skeleton lines matching PATTERN (the index, not prose)
+skim --grep PATTERN [PATHS]...    # skeleton lines matching regex PATTERN (the index, not prose)
 ```
 
 `PATHS` may be files, directories (walked, respecting ignore files), or quoted
@@ -74,9 +74,10 @@ Useful flags:
 | `--map-budget N` | Approximate token budget for `--map` (default 4096) |
 | `--focus PATH` | Bias `--map` toward this file/dir (`--deps` is an alias; repeatable) |
 | `--referrers NAME` | List every use of a name with its enclosing scope |
-| `--grep PATTERN` | Search the rendered skeletons (headings, quotes, signatures) for `PATTERN` |
+| `--grep PATTERN` | Search the rendered skeletons (headings, quotes, signatures) for regex `PATTERN` |
+| `--fixed-strings`, `-F` | Treat `--grep PATTERN` as a literal string, not a regular expression |
 | `--text` | With `--referrers`, also match comments and string literals |
-| `--ignore-case` | With `--referrers`, fold ASCII case |
+| `--ignore-case`, `-i` | Fold case for `--grep` and `--referrers` |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
 | `--band LO,HI` | Override the band for every doc |
 | `--comment-max R` | Override the comment ceiling (0.0–1.0) |
@@ -204,13 +205,22 @@ what a task touches before opening a single body.
 ```sh
 skim --grep seat todo/ pico/          # which docs carry the seat model?
 skim --grep 'FOOT_BAND' src/          # docs and code that name a constant
-skim --grep centre-map --ignore-case pico/*.md
+skim --grep 'seat|chair' todo/        # regex: either word
+skim -F --grep 'a.b' src/             # literal dot, not a wildcard
+skim --grep centre-map -i pico/*.md
 ```
 
-The match is a literal substring, ASCII case-folded with `--ignore-case`. Each
-hit prints the file, its 1-based source line, and the skeleton line, so it opens
-straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like grep,
-it exits 1 when nothing matches.
+`PATTERN` is a regular expression by default — what `grep -E` accepts. `.`, `*`,
+`+`, `?`, character classes, `(...)` groups, and `|` alternation all work, and
+`^`/`$` anchor to the start and end of the skeleton line. A pattern containing
+these metacharacters matches differently than it did before regex support; use
+`--fixed-strings` (`-F`) when you mean them literally, so a `.` in a dotted name
+matches only `.`. `--ignore-case` (`-i`) folds case, and an invalid pattern
+fails with exit 2.
+
+Each hit prints the file, its 1-based source line, and the skeleton line, so it
+opens straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like
+grep, it exits 1 when nothing matches.
 
 ```
 pico/BEST_PRACTICES.md:

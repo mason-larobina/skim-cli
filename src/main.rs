@@ -94,20 +94,26 @@ struct Cli {
     #[arg(long, value_name = "NAME")]
     referrers: Option<String>,
 
-    /// Search the rendered skeletons for PATTERN and print each hit with its
-    /// file and source line. This greps the *index* — markdown headings and
-    /// quote lines, code declaration signatures — not the prose, so it is the
-    /// scouting pass for the concepts and modules a task touches.
+    /// Search the rendered skeletons for regex PATTERN and print each hit
+    /// with its file and source line. This greps the *index* — markdown
+    /// headings and quote lines, code declaration signatures — not the prose,
+    /// so it is the scouting pass for the concepts and modules a task touches.
+    /// PATTERN is a regular expression, like `grep -E`; see --fixed-strings.
     #[arg(long, value_name = "PATTERN")]
     grep: Option<String>,
+
+    /// Treat --grep PATTERN as a literal string, not a regular expression, so
+    /// `.` and `*` match themselves (like `grep -F`).
+    #[arg(short = 'F', long = "fixed-strings")]
+    fixed_strings: bool,
 
     /// With --referrers, also match comments and string literals (a rename's
     /// `"Found"` label and its javadoc), not just code identifiers.
     #[arg(long)]
     text: bool,
 
-    /// With --referrers, fold ASCII case when matching.
-    #[arg(long = "ignore-case")]
+    /// Fold case when matching --grep patterns and --referrers names.
+    #[arg(short = 'i', long = "ignore-case")]
     ignore_case: bool,
 }
 
@@ -183,7 +189,13 @@ fn run() -> Result<ExitCode> {
     }
 
     if let Some(pattern) = &cli.grep {
-        let hits = search::grep(&paths, pattern, forced, cli.docs, cli.ignore_case)?;
+        let opts = search::GrepOptions {
+            force: forced,
+            docs: cli.docs,
+            ignore_case: cli.ignore_case,
+            fixed_strings: cli.fixed_strings,
+        };
+        let hits = search::grep(&paths, pattern, &opts)?;
         if cli.json {
             println!("{}", serde_json::to_string_pretty(&hits)?);
         } else {
