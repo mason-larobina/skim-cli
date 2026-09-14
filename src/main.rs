@@ -217,6 +217,11 @@ fn run() -> Result<ExitCode> {
             ));
             print!("{out}");
         }
+        if hits.is_empty() {
+            if let Some(hint) = search::zero_match_hint(pattern, cli.fixed_strings) {
+                eprintln!("{hint}");
+            }
+        }
         return Ok(if hits.is_empty() {
             ExitCode::from(1)
         } else {

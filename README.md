@@ -174,6 +174,10 @@ src/bobble/Bobble.java:
 76 occurrence(s) of "AnchoredLayout" in 17 file(s)
 ```
 
+The hit that *is* the declaration is flagged `[definition]` (`"definition": true`
+under `--json`), so a rename can tell the declaration apart from a use of the
+same name — which matters when the declaring scope's label is the name itself.
+
 It exits 1 when the name is absent, so it drops into a shell test like `grep`.
 
 The match is lexical — the same thing `grep` does — so a same-named local is
@@ -220,7 +224,10 @@ fails with exit 2.
 
 Each hit prints the file, its 1-based source line, and the skeleton line, so it
 opens straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like
-grep, it exits 1 when nothing matches.
+grep, it exits 1 when nothing matches. When a zero-hit `--grep` pattern contains
+a backslash-escaped ERE metacharacter (`\|`, `\(`, …) — the `grep` BRE habit —
+the result explains the ERE rule on stderr instead of leaving the miss
+undiagnosed.
 
 ```
 pico/BEST_PRACTICES.md:

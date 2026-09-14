@@ -137,3 +137,26 @@ fn split_line(raw: &str) -> (usize, String) {
     }
     (0, raw.trim_end().to_string())
 }
+
+/// A one-line diagnosis to print when `--grep` finds nothing but the pattern
+/// looks like a backslash-escaped ERE (a `grep` BRE habit). `\|` is a valid
+/// ERE that matches a literal pipe, so the empty result is technically right
+/// yet easy to misread as "the name is absent". Returns `None` for
+/// `--fixed-strings` literals and for patterns with no such escape, so an
+/// ordinary miss stays quiet.
+pub fn zero_match_hint(pattern: &str, fixed_strings: bool) -> Option<String> {
+    if fixed_strings {
+        return None;
+    }
+    let escapes = ["\\|", "\\(", "\\)", "\\+", "\\?", "\\{", "\\}"];
+    let detail = if pattern.contains("\\|") {
+        "alternation is `|`, not `\\|` (`\\|` matches a literal pipe)"
+    } else if escapes.iter().any(|e| pattern.contains(e)) {
+        "backslash-escaped metacharacters are literals; write the bare metacharacter"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "hint: --grep PATTERN is an ERE (grep -E): {detail}; use --fixed-strings for a literal pattern"
+    ))
+}

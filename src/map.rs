@@ -66,6 +66,8 @@ pub struct Occurrence {
     pub line: usize,
     /// `Type.method`, `Type`, or empty at file scope.
     pub enclosing: String,
+    /// True when this occurrence is the declaration itself rather than a use.
+    pub definition: bool,
 }
 
 /// Every occurrence of a name across the scanned files. Unlike the map graph,
@@ -98,7 +100,8 @@ impl ReferrerReport {
             } else {
                 &e.enclosing
             };
-            out.push_str(&format!("  {:<6} {}\n", e.line, enc));
+            let tail = if e.definition { "  [definition]" } else { "" };
+            out.push_str(&format!("  {:<6} {}{}\n", e.line, enc, tail));
         }
         let note = if self.text {
             ""
@@ -305,7 +308,7 @@ pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<R
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let lang = opts.force.unwrap_or_else(|| Lang::from_path(path));
         let tree = render::parse(&src, lang)?;
-        let mut hits: Vec<(usize, String)> = Vec::new();
+        let mut hits: Vec<(usize, String, bool)> = Vec::new();
         scan_hits(
             tree.root_node(),
             &src,
@@ -314,14 +317,16 @@ pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<R
             opts.text,
             opts.ignore_case,
             None,
+            None,
             &mut hits,
         );
         let file = rel(path);
-        for (line, enclosing) in hits {
+        for (line, enclosing, definition) in hits {
             entries.push(Occurrence {
                 file: file.clone(),
                 line,
                 enclosing,
+                definition,
             });
         }
     }
@@ -528,7 +533,9 @@ fn collect_refs(
 }
 
 /// Walk `node` recording every `symbol` occurrence, labelled with the nearest
-/// enclosing definition (`Type.method`). `enc` carries that label down. With
+/// enclosing definition (`Type.method`). `enc` carries that label down, and
+/// `def_span` carries the byte range of the enclosing declaration's name node
+/// so the declaration can be distinguished from a use of the same name. With
 /// `text`, comments and string literals are matched too (as whole words), which
 /// is what a rename needs to catch a label like `"Found"` and its javadoc; the
 /// default scan is code identifiers only.
@@ -541,17 +548,25 @@ fn scan_hits(
     text: bool,
     ignore_case: bool,
     enc: Option<&str>,
-    hits: &mut Vec<(usize, String)>,
+    def_span: Option<(usize, usize)>,
+    hits: &mut Vec<(usize, String, bool)>,
 ) {
-    let label = if lang.def_kinds().contains(&node.kind()) {
-        def_name(node, src).map(|n| match enc {
-            Some(e) => format!("{e}.{n}"),
-            None => n.to_string(),
-        })
+    let name_node = if lang.def_kinds().contains(&node.kind()) {
+        def_name_node(node, src)
     } else {
         None
     };
+    let label = name_node.map(|n| {
+        let n = &src[n.start_byte()..n.end_byte()];
+        match enc {
+            Some(e) => format!("{e}.{n}"),
+            None => n.to_string(),
+        }
+    });
     let enc = label.as_deref().or(enc);
+    let def_span = name_node
+        .map(|n| (n.start_byte(), n.end_byte()))
+        .or(def_span);
     let kind = node.kind();
     if is_reference_kind(kind) {
         let found = &src[node.start_byte()..node.end_byte()];
@@ -561,14 +576,19 @@ fn scan_hits(
             found == symbol
         };
         if matches {
-            hits.push((node.start_position().row + 1, enc.unwrap_or("").to_string()));
+            let definition = def_span == Some((node.start_byte(), node.end_byte()));
+            hits.push((
+                node.start_position().row + 1,
+                enc.unwrap_or("").to_string(),
+                definition,
+            ));
             return;
         }
     } else if text && (lang.comment_kinds().contains(&kind) || is_string_kind(kind)) {
         let raw = &src[node.start_byte()..node.end_byte()];
         if let Some(off) = find_text(raw, symbol, ignore_case) {
             let line = node.start_position().row + 1 + raw[..off].matches('\n').count();
-            hits.push((line, enc.unwrap_or("").to_string()));
+            hits.push((line, enc.unwrap_or("").to_string(), false));
         }
         // A comment or string literal contains no nested declarations, and its
         // child `string_fragment` would otherwise double-count the same hit.
@@ -576,7 +596,17 @@ fn scan_hits(
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        scan_hits(child, src, lang, symbol, text, ignore_case, enc, hits);
+        scan_hits(
+            child,
+            src,
+            lang,
+            symbol,
+            text,
+            ignore_case,
+            enc,
+            def_span,
+            hits,
+        );
     }
 }
 
@@ -685,60 +715,69 @@ fn is_reference_kind(kind: &str) -> bool {
         || matches!(kind, "name" | "word" | "command_name" | "variable_name")
 }
 
-fn ident_text<'a>(node: Node, src: &'a str) -> Option<&'a str> {
-    if is_reference_kind(node.kind()) {
-        node.utf8_text(src.as_bytes()).ok()
+fn ident_node<'a>(node: Node<'a>, src: &'a str) -> Option<Node<'a>> {
+    if is_reference_kind(node.kind()) && node.utf8_text(src.as_bytes()).is_ok() {
+        Some(node)
     } else {
         None
     }
 }
 
-fn first_ident<'a>(node: Node, src: &'a str) -> Option<&'a str> {
-    if let Some(t) = ident_text(node, src) {
-        return Some(t);
+fn first_ident_node<'a>(node: Node<'a>, src: &'a str) -> Option<Node<'a>> {
+    if let Some(n) = ident_node(node, src) {
+        return Some(n);
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some(t) = first_ident(child, src) {
-            return Some(t);
+        if let Some(n) = first_ident_node(child, src) {
+            return Some(n);
         }
     }
     None
 }
 
 /// A descendant's `name` field (JS `variable_declarator`, Go `type_spec`, …).
-fn name_field<'a>(node: Node, src: &'a str, depth: usize) -> Option<&'a str> {
+fn name_field_node<'a>(node: Node<'a>, src: &'a str, depth: usize) -> Option<Node<'a>> {
     if depth == 0 {
         return None;
     }
     if let Some(n) = node.child_by_field_name("name") {
-        if let Some(t) = ident_text(n, src).or_else(|| first_ident(n, src)) {
-            return Some(t);
+        if let Some(id) = ident_node(n, src).or_else(|| first_ident_node(n, src)) {
+            return Some(id);
         }
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some(t) = name_field(child, src, depth - 1) {
-            return Some(t);
+        if let Some(id) = name_field_node(child, src, depth - 1) {
+            return Some(id);
         }
     }
     None
 }
 
-/// The name a declaration binds. Tries the `name` field, then the declarator
-/// (C-family), then a descendant `name` field, then the first identifier.
-fn def_name<'a>(node: Node, src: &'a str) -> Option<&'a str> {
+/// The node a declaration's name is written at. Tries the `name` field, then
+/// the declarator (C-family) and `type` (a Rust `impl` block), then a
+/// descendant `name` field, then the first identifier. Returning the node, not
+/// just its text, lets a caller tell the declaration site from a use of the
+/// same name.
+fn def_name_node<'a>(node: Node<'a>, src: &'a str) -> Option<Node<'a>> {
     if let Some(n) = node.child_by_field_name("name") {
-        if let Some(t) = ident_text(n, src).or_else(|| first_ident(n, src)) {
-            return Some(t);
+        if let Some(id) = ident_node(n, src).or_else(|| first_ident_node(n, src)) {
+            return Some(id);
         }
     }
-    for field in ["declarator", "field"] {
+    for field in ["declarator", "field", "type"] {
         if let Some(n) = node.child_by_field_name(field) {
-            if let Some(t) = ident_text(n, src).or_else(|| first_ident(n, src)) {
-                return Some(t);
+            if let Some(id) = ident_node(n, src).or_else(|| first_ident_node(n, src)) {
+                return Some(id);
             }
         }
     }
-    name_field(node, src, 3).or_else(|| first_ident(node, src))
+    name_field_node(node, src, 3).or_else(|| first_ident_node(node, src))
+}
+
+/// The name a declaration binds.
+fn def_name<'a>(node: Node, src: &'a str) -> Option<&'a str> {
+    let n = def_name_node(node, src)?;
+    n.utf8_text(src.as_bytes()).ok()
 }

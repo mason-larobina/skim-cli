@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use skim::check::{self, check_doc, CheckOptions};
 use skim::discover::{self, Config, PairRule, Relation};
 use skim::lang::Lang;
-#[cfg(feature = "lang-java")]
+#[cfg(any(feature = "lang-java", feature = "lang-rust"))]
 use skim::map::{self, MapOptions};
 #[cfg(feature = "lang-java")]
 use skim::metrics;
@@ -656,5 +656,57 @@ fn grep_rejects_an_invalid_regex_but_accepts_it_literally() {
     let hits =
         skim::search::grep(std::slice::from_ref(&dir), "(", &grep_opts(false, true)).unwrap();
     assert_eq!(hits.len(), 1, "{hits:?}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn grep_zero_match_hint_flags_a_bre_escape() {
+    // A literal `\|` is a valid ERE, so the miss is silent by default; the
+    // hint names the likely mistake.
+    let hint = skim::search::zero_match_hint("lifeFrame\\|decal", false).unwrap();
+    assert!(hint.contains("alternation"), "{hint}");
+    // Other BRE escapes get the generic wording.
+    let generic = skim::search::zero_match_hint("a\\(b", false).unwrap();
+    assert!(generic.contains("metacharacter"), "{generic}");
+    // A plain miss and a literal (fixed-string) miss carry no hint.
+    assert!(skim::search::zero_match_hint("seat", false).is_none());
+    assert!(skim::search::zero_match_hint("a\\|b", true).is_none());
+}
+
+#[cfg(feature = "lang-rust")]
+#[test]
+fn referrers_marks_the_declaration_and_names_impls() {
+    let dir = tempdir("referrers-def");
+    std::fs::write(
+        dir.join("lib.rs"),
+        "struct Widget;\n\nimpl Widget {\n    fn draw(&self) { helper(); }\n    fn helper(&self) {}\n}\n\nfn helper() {}\n",
+    )
+    .unwrap();
+    let report =
+        map::referrers(std::slice::from_ref(&dir), "helper", &MapOptions::default()).unwrap();
+    // The `impl` block is named after its type, so the method label is
+    // `Widget.helper`, not the first method's name, and the declaration is
+    // flagged rather than the call site.
+    assert!(
+        report
+            .entries
+            .iter()
+            .any(|e| e.enclosing == "Widget.helper"),
+        "{:?}",
+        report.entries
+    );
+    assert!(
+        report.entries.iter().any(|e| e.definition && e.line == 5),
+        "{:?}",
+        report.entries
+    );
+    assert!(
+        report
+            .entries
+            .iter()
+            .any(|e| !e.definition && e.enclosing == "Widget.draw"),
+        "{:?}",
+        report.entries
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
