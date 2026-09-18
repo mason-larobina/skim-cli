@@ -219,3 +219,24 @@ pub fn zero_match_hint(pattern: &str, fixed_strings: bool) -> Option<String> {
         "hint: --grep PATTERN is an ERE (grep -E): {detail}; use --fixed-strings for a literal pattern"
     ))
 }
+
+/// A one-line nudge when a *skeleton* `--grep` misses: the skeleton elides
+/// bodies, so an assignment (`x.y =`), a call shape (`new T(`) or a literal
+/// cannot match it. The hint points at `--body`, which is the same search over
+/// raw source lines. `None` in body mode, where the user has already asked for
+/// raw lines, and the caller prints it only when [`zero_match_hint`] did not
+/// fire, so a miss carries at most one diagnosis.
+///
+/// The hint says the pattern *may* live in a body, not that it does; the caller
+/// prints it and exits 1 either way, exactly as an unhinted miss does.
+pub fn skeleton_miss_hint(body: bool) -> Option<String> {
+    if body {
+        return None;
+    }
+    Some(
+        "hint: no skeleton line matched; add --body to search raw source lines \
+         (assignments, call shapes, literals) and label each hit with its enclosing \
+         Type.method"
+            .to_string(),
+    )
+}

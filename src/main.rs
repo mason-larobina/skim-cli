@@ -239,6 +239,8 @@ fn run() -> Result<ExitCode> {
         if empty {
             if let Some(hint) = search::zero_match_hint(pattern, cli.fixed_strings) {
                 eprintln!("{hint}");
+            } else if let Some(hint) = search::skeleton_miss_hint(cli.body) {
+                eprintln!("{hint}");
             }
         }
         return Ok(if empty {

@@ -229,7 +229,8 @@ opens straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like
 grep, it exits 1 when nothing matches. When a zero-hit `--grep` pattern contains
 a backslash-escaped ERE metacharacter (`\|`, `\(`, …) — the `grep` BRE habit —
 the result explains the ERE rule on stderr instead of leaving the miss
-undiagnosed.
+undiagnosed; another zero hit explains the other likely cause, the body the
+skeleton elides, and points at `--body`.
 
 ```
 pico/BEST_PRACTICES.md:
