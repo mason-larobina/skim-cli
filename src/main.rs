@@ -321,7 +321,7 @@ fn run() -> Result<ExitCode> {
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&hits)?);
             } else {
-                print!("{}", body_report(&hits));
+                print!("{}", body_report(&hits, scanned));
             }
             hits.is_empty()
         } else {
@@ -560,7 +560,7 @@ fn collect_files(paths: &[PathBuf], forced: Option<Lang>) -> Vec<PathBuf> {
 
 /// Human-readable `--grep --body` output: the line, its enclosing scope, and
 /// the matched source line, grouped by file.
-fn body_report(hits: &[search::BodyMatch]) -> String {
+fn body_report(hits: &[search::BodyMatch], scanned: usize) -> String {
     let mut out = String::new();
     let mut last: Option<&str> = None;
     let mut files = 0usize;
@@ -578,9 +578,10 @@ fn body_report(hits: &[search::BodyMatch]) -> String {
         out.push_str(&format!("  {:<6} {:<24} {}\n", m.line, enc, m.text));
     }
     out.push_str(&format!(
-        "\n{} match(es) in {} file(s)\n",
+        "\n{} match(es) in {} file(s) (scanned {})\n",
         hits.len(),
-        files
+        files,
+        scanned
     ));
     out
 }
