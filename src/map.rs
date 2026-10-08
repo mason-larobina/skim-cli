@@ -310,7 +310,7 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
     }
     if omitted > 0 {
         text.push_str(&format!(
-            "# omitted: {} - raise --map-budget or pass --map --json\n",
+            "# omitted: {} - raise --map-budget to include them\n",
             omitted
         ));
     }

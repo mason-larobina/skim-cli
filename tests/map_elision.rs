@@ -40,7 +40,7 @@ fn a_map_over_budget_counts_and_labels_what_it_dropped() {
     assert!(map.omitted > 0, "{}", map.text);
     assert!(map.selected < map.selected + map.omitted, "{}", map.text);
     let footer = format!(
-        "# omitted: {} - raise --map-budget or pass --map --json",
+        "# omitted: {} - raise --map-budget to include them",
         map.omitted
     );
     assert_eq!(
