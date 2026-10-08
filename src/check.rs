@@ -379,6 +379,11 @@ pub fn collect_docs(paths: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 pub fn print_human(report: &Report, quiet: bool) {
+    // An empty report is a green "0 docs, 0 violation(s)" that reads as a pass;
+    // say on stderr that nothing was actually checked.
+    if report.checks.is_empty() {
+        eprintln!("note: no documents matched the given paths - nothing was checked");
+    }
     let mut printed = false;
     let mut skipped = 0usize;
     for c in &report.checks {

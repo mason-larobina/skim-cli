@@ -673,6 +673,16 @@ fn grep_zero_match_hint_flags_a_bre_escape() {
     assert!(skim::search::zero_match_hint("a\\|b", true).is_none());
 }
 
+#[test]
+fn skeleton_miss_hint_points_at_body_mode_only_for_skeleton_searches() {
+    // A skeleton miss nudges the reader at the body search the skeleton elides.
+    let hint = skim::search::skeleton_miss_hint(false).unwrap();
+    assert!(hint.contains("--body"), "{hint}");
+    // Body mode is already the raw-line search: no nudge, and no second hint
+    // next to the BRE one a skeleton miss may carry.
+    assert!(skim::search::skeleton_miss_hint(true).is_none());
+}
+
 #[cfg(feature = "lang-rust")]
 #[test]
 fn referrers_marks_the_declaration_and_names_impls() {

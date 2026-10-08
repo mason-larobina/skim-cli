@@ -219,3 +219,70 @@ pub fn zero_match_hint(pattern: &str, fixed_strings: bool) -> Option<String> {
         "hint: --grep PATTERN is an ERE (grep -E): {detail}; use --fixed-strings for a literal pattern"
     ))
 }
+
+/// A one-line nudge when a *skeleton* `--grep` misses: the skeleton elides
+/// bodies, so an assignment (`x.y =`), a call shape (`new T(`) or a literal
+/// cannot match it. The hint points at `--body`, which is the same search over
+/// raw source lines. `None` in body mode, where the user has already asked for
+/// raw lines, and the caller prints it only when [`zero_match_hint`] did not
+/// fire, so a miss carries at most one diagnosis.
+///
+/// The hint says the pattern *may* live in a body, not that it does; the caller
+/// prints it and exits 1 either way, exactly as an unhinted miss does.
+pub fn skeleton_miss_hint(body: bool) -> Option<String> {
+    if body {
+        return None;
+    }
+    Some(
+        "hint: no skeleton line matched; add --body to search raw source lines \
+         (assignments, call shapes, literals) and label each hit with its enclosing \
+         Type.method"
+            .to_string(),
+    )
+}
+
+/// A one-line diagnosis when a `--grep --body` miss may really be a markdown
+/// miss: `--body` reads raw *source* lines, so a `.md` file's prose is never
+/// searched. Without it, a query whose text lives in a design doc reads as
+/// "the concept is absent" when it is only in a document. Returns `None` when
+/// no markdown was scanned, so a pure-source miss stays quiet; the caller
+/// passes the markdown count from the same expansion it scanned.
+///
+/// This is the body-mode member of the "where the text lives" family, beside
+/// [`skeleton_miss_hint`]; the caller prints it after [`zero_match_hint`], so a
+/// miss carries at most one diagnosis from each family.
+pub fn body_doc_hint(scanned_markdown: usize) -> Option<String> {
+    if scanned_markdown == 0 {
+        return None;
+    }
+    Some(format!(
+        "hint: --body searches source lines only; markdown prose is a `git grep` job \
+         ({scanned_markdown} markdown file(s) were scanned)"
+    ))
+}
+
+/// A one-line diagnosis when `--referrers NAME` misses because `NAME` carries
+/// call or member syntax (`panel()`, `Frame.pairs`): `--referrers` matches a
+/// bare identifier only, so the natural query for call sites silently returns
+/// nothing. Returns `None` for a bare identifier, so a genuine absence stays
+/// quiet. The two fixes are dropping the syntax, or searching the qualified
+/// name in raw source with `--grep NAME --body`.
+pub fn referrers_shape_hint(name: &str) -> Option<String> {
+    if is_bare_identifier(name) {
+        return None;
+    }
+    Some(format!(
+        "hint: --referrers matches a bare identifier, not {name:?}'s call or member \
+         syntax; drop the syntax, or use --grep {name:?} --body for the qualified name"
+    ))
+}
+
+/// `[A-Za-z_$][A-Za-z0-9_$]*`: the kind of name `--referrers` will match.
+fn is_bare_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
