@@ -57,6 +57,11 @@ pub struct Map {
     pub text: String,
     /// The selected definitions, in rank order.
     pub entries: Vec<MapEntry>,
+    /// How many definitions the budget printed; always `entries.len()`.
+    pub selected: usize,
+    /// Definitions the budget dropped. A def printed inside a selected
+    /// ancestor's body is not dropped, so it is not counted here.
+    pub omitted: usize,
 }
 
 /// One place a name occurs, with the definition that encloses it.
@@ -218,6 +223,15 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
         }
     }
 
+    let selected_count = selected.len();
+    let omitted = (0..defs.len())
+        .filter(|&i| {
+            !defs[i].rendered.trim().is_empty()
+                && !selected_set.contains(&i)
+                && !has_ancestor(i, &defs, &selected_set)
+        })
+        .count();
+
     let entries: Vec<MapEntry> = selected
         .iter()
         .map(|&i| MapEntry {
@@ -236,6 +250,12 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
         }
     }
     let mut text = String::new();
+    text.push_str(&format!(
+        "# map: {} of {} definitions, budget {} tokens\n",
+        selected_count,
+        selected_count + omitted,
+        opts.budget_tokens
+    ));
     for &fi in &file_order {
         text.push_str(&rel(&files[fi]));
         text.push_str(":\n");
@@ -288,8 +308,19 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
         }
         text.push('\n');
     }
+    if omitted > 0 {
+        text.push_str(&format!(
+            "# omitted: {} - raise --map-budget or pass --map --json\n",
+            omitted
+        ));
+    }
 
-    Ok(Map { text, entries })
+    Ok(Map {
+        text,
+        entries,
+        selected: selected_count,
+        omitted,
+    })
 }
 
 /// Find every occurrence of `symbol` under `paths`, each labelled with its
