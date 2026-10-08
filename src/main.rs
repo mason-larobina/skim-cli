@@ -22,7 +22,8 @@ struct Cli {
     #[arg(long)]
     check: bool,
 
-    /// Print raw metrics only.
+    /// Print raw metrics only. `decls` counts each declarator, not each
+    /// declaration, so one field holding N constants counts N.
     #[arg(long)]
     count: bool,
 
@@ -43,6 +44,8 @@ struct Cli {
     comment_min: Option<usize>,
 
     /// Source metric the band is measured against: nonblank, code, or decls.
+    /// `decls` counts each declarator, not each declaration, so one field
+    /// holding N constants counts N.
     #[arg(long, value_name = "METRIC")]
     metric: Option<String>,
 
@@ -99,6 +102,9 @@ struct Cli {
     /// headings and quote lines, code declaration signatures — not the prose,
     /// so it is the scouting pass for the concepts and modules a task touches.
     /// PATTERN is a regular expression, like `grep -E`; see --fixed-strings.
+    /// Accepted forms: `--grep PATTERN`, the match flags before `--grep` or
+    /// after the pattern (`-iE --grep PAT`), and `--grep=<pattern>` for a
+    /// pattern that itself begins with `-`.
     #[arg(long, value_name = "PATTERN")]
     grep: Option<String>,
 
@@ -106,14 +112,22 @@ struct Cli {
     /// instead of the skeleton, and label each hit with its enclosing
     /// `Type.method`. This is the structural pass the skeleton elides: an
     /// assignment (`x.y =`), a call shape (`new Box2d(`), a literal. Markdown
-    /// prose is not searched.
-    #[arg(long, requires = "grep")]
+    /// prose is not searched. Body search belongs to `--grep`: write
+    /// `--grep PATTERN --body`, with the match flags before `--grep` or after
+    /// the pattern.
+    #[arg(long, requires = "grep", conflicts_with = "referrers")]
     body: bool,
 
     /// Treat --grep PATTERN as a literal string, not a regular expression, so
-    /// `.` and `*` match themselves (like `grep -F`).
+    /// `.` and `*` match themselves (like `grep -F`); write `--grep PATTERN -F`
+    /// or put `-F` before `--grep`.
     #[arg(short = 'F', long = "fixed-strings")]
     fixed_strings: bool,
+
+    /// Accepted no-op: PATTERN is already an ERE, so this changes nothing. It
+    /// exists so `-iE`/`-E` parse like the `grep` habit they come from.
+    #[arg(short = 'E', long = "extended-regexp")]
+    extended_regexp: bool,
 
     /// With --referrers, also match comments and string literals (a rename's
     /// `"Found"` label and its javadoc), not just code identifiers.
@@ -134,6 +148,72 @@ fn parse_band(s: &str) -> Result<(f64, f64), String> {
     Ok((lo, hi))
 }
 
+/// Parse the CLI, first normalizing the `--grep -iE PATTERN` wedge. Falls back
+/// to a plain parse when any argument is not valid UTF-8, so a non-UTF-8 argv
+/// can never panic the normalizer.
+fn parse_cli() -> Cli {
+    let args: Option<Vec<String>> = std::env::args_os().map(|a| a.into_string().ok()).collect();
+    match args {
+        Some(argv) => Cli::parse_from(normalize_grep_args(argv)),
+        None => Cli::parse(),
+    }
+}
+
+/// Rewrite `--grep -iE PATTERN` into the form clap accepts, `-iE --grep PATTERN`.
+/// clap treats any short-flag token directly after `--grep` as a new argument
+/// (`is_new_arg`), so the pattern must not sit behind the flags: the command
+/// exits 2 today even though `-E` parses. Only `--grep` is rewritten and only
+/// when the token right after it is a known match flag followed by a real
+/// pattern; everything else, including `--grep=PATTERN`, passes through.
+fn normalize_grep_args(argv: Vec<String>) -> Vec<String> {
+    let Some(i) = argv.iter().position(|a| a == "--grep") else {
+        return argv;
+    };
+    let Some(next) = argv.get(i + 1) else {
+        return argv;
+    };
+    if !is_match_flag(next) {
+        return argv;
+    }
+    // First token after the flag run that is not a match flag: the pattern.
+    let Some(j) = (i + 1..argv.len()).find(|&k| !is_match_flag(&argv[k])) else {
+        return argv;
+    };
+    let mut out = Vec::with_capacity(argv.len());
+    out.extend_from_slice(&argv[..i]);
+    out.extend_from_slice(&argv[i + 1..j]);
+    out.push("--grep".to_string());
+    out.push(argv[j].clone());
+    out.extend_from_slice(&argv[j + 1..]);
+    out
+}
+
+/// A `--grep` match flag that may be wedged between `--grep` and its pattern:
+/// the long forms, or a short cluster of `-i`/`-E`/`-F`/`-q` (`-iE`, `-Fq`).
+fn is_match_flag(t: &str) -> bool {
+    matches!(
+        t,
+        "--ignore-case"
+            | "--extended-regexp"
+            | "--fixed-strings"
+            | "--body"
+            | "--text"
+            | "--docs"
+            | "--json"
+            | "--quiet"
+            | "--lines"
+    ) || is_short_flag_cluster(t)
+}
+
+/// `-iE`, `-iF`, `-Fq`, …: a leading `-`, then one or more short flag chars. A
+/// bare `-`, `--`, `-1` or `-x` is not a cluster and so is not a match flag.
+fn is_short_flag_cluster(t: &str) -> bool {
+    let Some(rest) = t.strip_prefix('-') else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|c| matches!(c, 'i' | 'E' | 'F' | 'q'))
+}
+
 fn main() -> ExitCode {
     // Restore default SIGPIPE handling so `skim … | head` exits quietly
     // instead of panicking on a broken pipe.
@@ -151,7 +231,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     let cwd = std::env::current_dir()?;
     if cli.list_languages {
         print_languages(cli.json)?;
@@ -176,6 +256,25 @@ fn run() -> Result<ExitCode> {
         cli.paths.clone()
     };
 
+    // `--grep`, `--referrers` and `--map` walk the same paths: expand once so a
+    // typo exits 2 naming the requested paths, not a "0 results" report, and
+    // `--grep`'s summary can say how many files were scanned.
+    let scan = if cli.referrers.is_some() || cli.grep.is_some() || cli.map {
+        let expanded = discover::expand(&paths);
+        if !expanded.iter().any(|p| p.is_file()) {
+            let requested: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            eprintln!("skim: no files matched {}", requested.join(" "));
+            return Ok(ExitCode::from(2));
+        }
+        Some(expanded)
+    } else {
+        None
+    };
+    let scanned = scan
+        .as_ref()
+        .map(|e| e.iter().filter(|p| p.is_file()).count())
+        .unwrap_or(0);
+
     if let Some(symbol) = &cli.referrers {
         let opts = map::MapOptions {
             force: forced,
@@ -188,6 +287,11 @@ fn run() -> Result<ExitCode> {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
             print!("{}", report.text());
+        }
+        if report.occurrences == 0 {
+            if let Some(hint) = search::referrers_shape_hint(symbol) {
+                eprintln!("{hint}");
+            }
         }
         return Ok(if report.occurrences == 0 {
             ExitCode::from(1)
@@ -202,6 +306,15 @@ fn run() -> Result<ExitCode> {
             docs: cli.docs,
             ignore_case: cli.ignore_case,
             fixed_strings: cli.fixed_strings,
+        };
+        // The markdown half of the scan set, so a `--body` miss over prose a
+        // doc carries can be diagnosed instead of read as an absent concept.
+        let scanned_markdown = if cli.body {
+            scan.as_ref()
+                .map(|e| e.iter().filter(|p| Lang::from_path(p).is_doc()).count())
+                .unwrap_or(0)
+        } else {
+            0
         };
         let empty = if cli.body {
             let hits = search::grep_body(&paths, pattern, &opts)?;
@@ -228,9 +341,10 @@ fn run() -> Result<ExitCode> {
                     out.push_str(&format!("{:>5}  {}\n", m.line, m.skeleton));
                 }
                 out.push_str(&format!(
-                    "\n{} match(es) in {} file(s)\n",
+                    "\n{} match(es) in {} file(s) (scanned {})\n",
                     hits.len(),
-                    files
+                    files,
+                    scanned
                 ));
                 print!("{out}");
             }
@@ -240,6 +354,9 @@ fn run() -> Result<ExitCode> {
             if let Some(hint) = search::zero_match_hint(pattern, cli.fixed_strings) {
                 eprintln!("{hint}");
             } else if let Some(hint) = search::skeleton_miss_hint(cli.body) {
+                eprintln!("{hint}");
+            }
+            if let Some(hint) = search::body_doc_hint(scanned_markdown) {
                 eprintln!("{hint}");
             }
         }
