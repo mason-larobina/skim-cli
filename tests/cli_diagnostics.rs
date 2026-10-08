@@ -115,12 +115,18 @@ fn grep_body_wedge_resolves_rather_than_erroring() {
 }
 
 #[test]
-fn grep_pattern_then_body_still_finds_no_body_hit() {
+fn the_canonical_order_still_reaches_bodies() {
     // Regression guard for the canonical order: `--grep PATTERN --body` must
-    // stay a body search, so a lowercase pattern the bodies lack exits 1.
+    // stay a body search. `println` lives only in the elided method body, so
+    // the skeleton misses it and the body search finds it with its scope
+    // label - a pattern the skeleton also carries would not discriminate.
     let dir = java_fixture("grep-canonical");
-    let (code, _out, err) = skim(&["--grep", "alpha", "--body", &dir.to_string_lossy()]);
-    assert_eq!(code, 1, "stderr: {err}");
+    let (body_code, body_out, body_err) =
+        skim(&["--grep", "println", "--body", &dir.to_string_lossy()]);
+    assert_eq!(body_code, 0, "stdout: {body_out}\nstderr: {body_err}");
+    assert!(body_out.contains("Alpha.run"), "stdout: {body_out}");
+    let (skel_code, skel_out, _) = skim(&["--grep", "println", &dir.to_string_lossy()]);
+    assert_eq!(skel_code, 1, "stdout: {skel_out}");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
