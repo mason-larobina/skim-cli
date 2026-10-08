@@ -78,6 +78,7 @@ Useful flags:
 | `--grep PATTERN` | Search the rendered skeletons (headings, quotes, signatures) for regex `PATTERN` |
 | `--body` | With `--grep`, search raw source lines (bodies, comments, strings) and label each hit with its enclosing scope |
 | `--fixed-strings`, `-F` | Treat `--grep PATTERN` as a literal string, not a regular expression |
+| `-E`, `--extended-regexp` | Accepted no-op: `PATTERN` is already an ERE, so the `grep -iE` habit parses |
 | `--text` | With `--referrers`, also match comments and string literals |
 | `--ignore-case`, `-i` | Fold case for `--grep` and `--referrers` |
 | `--against <GLOB>` | Track this source for every doc (repeatable) |
@@ -140,6 +141,13 @@ skim --map --focus src/core/GameProgram.java src/     # what GameProgram relies 
 skim --map --map-budget 2048 src/ --json
 ```
 
+- The rendered map names its own selection. The first line counts what it
+  printed — `# map: 8 of 306 definitions, budget 4096 tokens` — and when the
+  budget cut the ranking short, a final line says how many were dropped and to
+  raise `--map-budget` to include them. A map is a *subset* printed in the same
+  shape as a full render, so without those two lines a truncated map reads as a
+  complete one. `--json` is deliberately unchanged: it still emits the selected
+  entries as a bare array and so carries no omission count.
 - `--focus <PATH>` (alias `--deps`) biases the ranking toward those files.
   Without it the map is the repo's global shape; with it, the map is the API
   surface relevant to the files you named. The bias flows *forward*: the result
@@ -182,6 +190,12 @@ same name — which matters when the declaring scope's label is the name itself.
 
 It exits 1 when the name is absent, so it drops into a shell test like `grep`.
 
+The match is a bare identifier, so a name carrying call or member syntax —
+`panel()`, `Frame.pairs`, `Type::new` — matches nothing at all, which is the
+natural query for call sites. A zero hit over such a name says so on stderr and
+names the two fixes: drop the syntax (`--referrers panel`), or search the
+qualified name in raw source with `--grep 'Frame.pairs' --body`.
+
 The match is lexical — the same thing `grep` does — so a same-named local is
 reported too, and by default it only sees **code**, not comments or strings: a
 javadoc `{@link Widget}` is not a hit and neither is the `"Found"` label a
@@ -222,11 +236,18 @@ skim --grep centre-map -i pico/*.md
 these metacharacters matches differently than it did before regex support; use
 `--fixed-strings` (`-F`) when you mean them literally, so a `.` in a dotted name
 matches only `.`. `--ignore-case` (`-i`) folds case, and an invalid pattern
-fails with exit 2.
+fails with exit 2. `-E`/`--extended-regexp` is accepted as a no-op — the pattern
+is already an ERE — so the `grep -iE` habit parses. The match flags may sit on
+either side of the value (`-iE --grep PATTERN`, `--grep PATTERN -iE` and
+`--grep -iE PATTERN` are one command), and `--grep=<pattern>` is the escape
+hatch for a pattern that itself begins with `-`.
 
-Each hit prints the file, its 1-based source line, and the skeleton line, so it
+Every hit prints the file, its 1-based source line, and the skeleton line, so it
 opens straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like
-grep, it exits 1 when nothing matches. When a zero-hit `--grep` pattern contains
+grep, it exits 1 when nothing matches. The trailing count names both the files
+that matched and the files scanned, so a real absence cannot be confused with a
+path typo — a path matching no files at all is `skim: no files matched …` on
+stderr with exit 2. When a zero-hit `--grep` pattern contains
 a backslash-escaped ERE metacharacter (`\|`, `\(`, …) — the `grep` BRE habit —
 the result explains the ERE rule on stderr instead of leaving the miss
 undiagnosed; another zero hit explains the other likely cause, the body the
@@ -236,7 +257,7 @@ skeleton elides, and points at `--body`.
 pico/BEST_PRACTICES.md:
   140  > `core.Seats` is the lock: seat 0 is p1, pre-seated by `openedBy` and logging
 
-10 match(es) in 3 file(s)
+10 match(es) in 3 file(s) (scanned 12)
 ```
 
 ### Body search (`--grep --body`)
@@ -255,18 +276,21 @@ skim --grep 'anchorBox =' -F --body src/    # a literal statement
 ```
 
 It reuses `-i`/`-F`, the ERE semantics, and the exit codes of `--grep`; the
-pattern is a regex by default. `--grep`'s pattern comes first — write
-`--grep PATTERN --body` (or `--body --grep PATTERN`), not `--grep --body
-PATTERN`. The match is line-oriented, like `grep`, so `^`/`$` anchor to the line
-(indentation included). Markdown is skipped — its body is prose, which the
-enclosing label does not describe.
+pattern is a regex by default. The pattern is the value of `--grep`, so the
+canonical form is `--grep PATTERN --body`; the match flags may precede `--grep`
+or follow the pattern, and the wedge `--grep --body PATTERN` is normalized to
+the same command. The match is line-oriented, like `grep`, so `^`/`$` anchor to
+the line (indentation included). Markdown is skipped — its body is prose, which
+the enclosing label does not describe — and a zero hit over a tree that contains
+markdown says so on stderr, because the text you are looking for may simply live
+in a document.
 
 ```
 src/core/Bobble.java:
   217    Bobble.layout            anchorBox = new Box2d();
   335    Bobble.layout            this.anchorBox = layout.anchorBox;
 
-2 match(es) in 1 file(s)
+2 match(es) in 1 file(s) (scanned 1)
 ```
 
 `--json` emits `{file, line, enclosing, text}` objects, so a script gets the
@@ -338,6 +362,12 @@ Without a config, a `DESIGN.md` or `README.md` tracks the parseable source
 siblings under its own directory, and other markdown files are skipped unless
 they opt in with `skim: self` or `--against`.
 
+A `--check` run that matched no documents at all prints `0 docs, 0 violation(s)`
+and exits 0, which reads as a pass. It now also says
+`note: no documents matched the given paths - nothing was checked` on stderr, so
+an empty run is never mistaken for a green one — as when a path names a source
+file rather than a document.
+
 ## Semantics
 
 For a document with `D` non-blank lines and a source set measured at `S`:
@@ -352,7 +382,9 @@ For a document with `D` non-blank lines and a source set measured at `S`:
 
 `S` is `--metric`:
 `nonblank` (default, every non-blank line), `code` (non-blank lines that are not
-comment-only), or `decls` (declaration count).
+comment-only), or `decls` (declarations, counted per declarator rather than per
+statement — a table of N constants in one field declaration counts N, so it is a
+poor size proxy for data tables).
 
 The comment ceiling is per **file**, not the pair aggregate: a source file whose
 own comment-only lines exceed `comment_max` of its non-blank lines (a linear

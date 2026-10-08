@@ -16,7 +16,7 @@ The corpus is the Pi session store (`~/.pi/agent/sessions`, 976 transcripts,
 tool call whose command contains `skim` was paired with its `toolResult` and
 with the following assistant thinking, text and tool calls, giving **1,479
 calls / 1,040 skim command segments**. Segments were split into *dev* sessions
-(skiming's own Rust source, `cargo`) and *consumer* sessions (scouting a Java
+(skim's own Rust source, `cargo`) and *consumer* sessions (scouting a Java
 game repo), leaving **783 consumer segments**.
 
 Every symptom quoted below was then re-run against the shipped binary
@@ -197,15 +197,52 @@ the following week, 197 six weeks later).
 
 ## What this branch changes
 
-1. `--map` reports its selection: a header naming the mode and the counts, and a
-   footer when definitions were omitted.
-2. A path that matches no files is an error, and the hit summary reports how
-   many files were scanned, so a typo and an absence stop looking alike.
-3. `-E` is accepted as a no-op (ERE is the default), and the `--grep` value
-   ordering is stated in the help text.
+1. `--map` reports its selection: a leading `# map: <selected> of <n>
+   definitions, budget <tokens> tokens` line and, only when the budget cut the
+   ranking short, a `# omitted: <n> - raise --map-budget to include them`
+   footer. `Map` carries `selected` and `omitted`; `--json` keeps its bare-array
+   shape, so it still cannot show the omission count — a deliberate 0.x
+   compatibility choice.
+2. `--grep`, `--referrers` and `--map` expand the scan set once, and a request
+   that matches no file exits 2 with `skim: no files matched <paths>` instead of
+   falling through to a zero-result report. The `--grep` summaries now name the
+   files scanned as well as the files that matched.
+3. The `--grep` argument wedge is closed at the parser boundary rather than
+   documented. `-E`/`--extended-regexp` is accepted as a no-op so `-iE` parses,
+   and a scoped pre-parse normalizer rewrites `--grep F1 F2 PATTERN` to
+   `F1 F2 --grep PATTERN`, so `--grep -iE PATTERN`, `--grep -iF PATTERN` and
+   `--grep --body PATTERN` all resolve. It fires only when the token after
+   `--grep` is a known boolean match flag, and passes `--grep=PATTERN`,
+   `--grep --`, a non-UTF-8 argv and every other mode through untouched.
 4. `--body` on markdown and `--referrers` with call or member syntax get a
    one-line diagnosis instead of a bare zero.
 5. `--body` conflicts with `--referrers` explicitly, with a message that names
-   the right command.
-6. `--check` says when it matched no documents, and `--count`'s `decls` metric
-   is documented as per-declarator.
+   both arguments instead of asking for `--grep`.
+6. `--check` says when it matched no documents, and `--count` / `--metric`
+   document `decls` as per-declarator.
+
+Two judgement calls are worth recording, because neither is forced by the data:
+
+- **The wedge is fixed in the parser, not the docs.** An earlier draft added
+  `-E` plus a help-text ordering note, which does not fix the shape the audit
+  actually caught: clap 4 refuses a short-flag token as `--grep`'s value, so
+  `--grep -iE PATTERN` exits 2 before the new flag is ever examined. Accepting
+  the grep-like ordering costs ~20 lines of argv normalization and removes the
+  failure mode instead of describing it.
+- **`skim --grep -i TOKEN` reads TOKEN as the pattern.** With no further tokens
+  there is no structural way to tell "TOKEN is a path and the pattern was
+  forgotten" from "TOKEN is the pattern and the paths defaulted to the cwd".
+  The pattern reading wins, because it is the one shape where the required
+  argument was supplied and an optional one omitted, and because it matches
+  `grep -i foo`. The cost is that the ambiguous shape now reports 0 matches on
+  stdout at exit 1 instead of a usage error at exit 2; a heuristic that sniffs
+  whether the token looks like a path or an existing directory was considered
+  and rejected.
+
+Along the way the `--map` footer's first draft was found to be wrong on the
+branch: it advised `--map --json` as the way to see what was omitted, but
+`--json` honours the same budget and returns the same selection.
+
+Test coverage added: `tests/map_elision.rs` (2), `tests/miss_hints.rs` (4) and
+`tests/cli_diagnostics.rs` (15, end to end against the built binary), on top of
+the 34 existing integration tests.
