@@ -85,6 +85,8 @@ pub struct ReferrerReport {
     pub symbol: String,
     pub occurrences: usize,
     pub files: usize,
+    /// Source files searched, so a zero can be told from an empty scan set.
+    pub scanned: usize,
     /// Whether comments and string literals were included in the scan.
     pub text: bool,
     pub entries: Vec<Occurrence>,
@@ -111,11 +113,11 @@ impl ReferrerReport {
         let note = if self.text {
             ""
         } else {
-            " (code identifiers only; pass --text to include comments and string literals)"
+            "; code identifiers only, pass --text to include comments and string literals"
         };
         out.push_str(&format!(
-            "\n{} occurrence(s) of {:?} in {} file(s){note}\n",
-            self.occurrences, self.symbol, self.files
+            "\n{} occurrence(s) of {:?} in {} file(s) (scanned {}{note})\n",
+            self.occurrences, self.symbol, self.files, self.scanned
         ));
         out
     }
@@ -333,6 +335,7 @@ pub fn run(paths: &[PathBuf], context: &[PathBuf], opts: &MapOptions) -> Result<
 /// result is the list of scopes to change rather than a pile of line numbers.
 pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<ReferrerReport> {
     let files = collect(paths, opts.force);
+    let scanned = files.len();
     let mut entries: Vec<Occurrence> = Vec::new();
     for path in &files {
         let src =
@@ -376,6 +379,7 @@ pub fn referrers(paths: &[PathBuf], symbol: &str, opts: &MapOptions) -> Result<R
         symbol: symbol.to_string(),
         occurrences: entries.len(),
         files,
+        scanned,
         text: opts.text,
         entries,
     })

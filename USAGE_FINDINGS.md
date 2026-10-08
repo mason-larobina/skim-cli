@@ -243,6 +243,50 @@ Along the way the `--map` footer's first draft was found to be wrong on the
 branch: it advised `--map --json` as the way to see what was omitted, but
 `--json` honours the same budget and returns the same selection.
 
+## Cross-check against Claude Code sessions
+
+The audit read Pi transcripts. The same question was put to the Claude Code
+session store (`~/.claude/projects`, 184 transcripts, 2026-09-16 to
+2026-10-08): **432 skim calls / 485 command segments in 87 transcripts**, all
+consumer use against the same Java game repo. The mix is different and so is
+the dominant failure:
+
+| mode | segments |
+| --- | --- |
+| `--docs` | 194 |
+| `--grep` | 123 (+11 `--body`) |
+| `--map` | 53 |
+| `--referrers` | 37 |
+| render | 32 |
+| `--check` | 19 |
+| `--lines` | 15 |
+
+- **The wedge is the Claude failure, and it is always `-i`.** 21 calls in 19
+  transcripts wrote `skim --grep -i PATTERN PATH` - never `-iE` or `--body` -
+  and every one exited 2 under 0.4. Because the call was nearly always one
+  segment of a compound command (`skim ... | head; ls mc8/; ...`), the clap
+  error scrolled past among other output, 8 of them under `2>/dev/null`, and at
+  least 7 were followed directly by an `rg` of the same terms. 0.5.0's
+  normalizer resolves the shape; `--grep -i PATTERN PATH`, with and without
+  `--body`, was re-run against it to confirm.
+- **`--docs` is the Claude workhorse (40% of segments), and it shared the typo
+  hole.** The 0.5.0 guard covered `--grep`, `--referrers` and `--map` only, so
+  `skim --docs mc8/nope/`, a plain render and `--count` still exited 0 with
+  nothing printed. The guard now covers every mode but `--check`.
+- **The guard counted files, not source.** `expand` returns every walked file,
+  so a directory of PNGs (the repo's `golden/<app>/` directories are exactly
+  that) passed the guard: `--map` printed `0 of 0 definitions` at exit 0 and
+  `--grep` reported `(scanned 1)` for one image. The guard and the scanned
+  count now count only files skim parses, and a directory with files but no
+  source says `no source files matched` - distinct from a typo.
+- **`--referrers` never got the scanned count.** Its summary still read
+  `0 occurrence(s) ... in 0 file(s)`, the exact ambiguity gap 3 describes; four
+  Claude calls hit it. It now reads `(scanned N; code identifiers only, ...)`
+  and `--json` carries `scanned`.
+- **`--body` counted the markdown it skips.** Over a lone design doc it said
+  `(scanned 1)` and, on the next line, that markdown is not searched. The count
+  is now source-only and the hint says the markdown files were *skipped*.
+
 Test coverage added: `tests/map_elision.rs` (2), `tests/miss_hints.rs` (4) and
-`tests/cli_diagnostics.rs` (15, end to end against the built binary), on top of
+`tests/cli_diagnostics.rs` (19, end to end against the built binary), on top of
 the 34 existing integration tests.

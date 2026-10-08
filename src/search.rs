@@ -245,8 +245,8 @@ pub fn skeleton_miss_hint(body: bool) -> Option<String> {
 /// miss: `--body` reads raw *source* lines, so a `.md` file's prose is never
 /// searched. Without it, a query whose text lives in a design doc reads as
 /// "the concept is absent" when it is only in a document. Returns `None` when
-/// no markdown was scanned, so a pure-source miss stays quiet; the caller
-/// passes the markdown count from the same expansion it scanned.
+/// no markdown was in the scan set, so a pure-source miss stays quiet; the
+/// caller passes the markdown count from the same expansion it scanned.
 ///
 /// This is the body-mode member of the "where the text lives" family, beside
 /// [`skeleton_miss_hint`]; the caller prints it after [`zero_match_hint`], so a
@@ -257,7 +257,7 @@ pub fn body_doc_hint(scanned_markdown: usize) -> Option<String> {
     }
     Some(format!(
         "hint: --body searches source lines only; markdown prose is a `git grep` job \
-         ({scanned_markdown} markdown file(s) were scanned)"
+         ({scanned_markdown} markdown file(s) were skipped)"
     ))
 }
 

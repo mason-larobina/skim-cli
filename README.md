@@ -49,7 +49,10 @@ skim --grep PATTERN --body [PATHS]...  # raw source lines matching PATTERN, with
 ```
 
 `PATHS` may be files, directories (walked, respecting ignore files), or quoted
-globs. With no paths, `.` is used.
+globs. With no paths, `.` is used. In every mode but `--check`, paths that
+match no file exit 2 with `skim: no files matched …` on stderr, and paths that
+match only files skim cannot parse (images, say) exit 2 with
+`skim: no source files matched …` — a typo is never an empty render.
 
 ```sh
 skim src/                          # every source file's skeleton
@@ -181,7 +184,7 @@ src/bobble/Bobble.java:
   217    Bobble.anchored
   335    Bobble.layout
 ...
-76 occurrence(s) of "AnchoredLayout" in 17 file(s)
+76 occurrence(s) of "AnchoredLayout" in 17 file(s) (scanned 214; code identifiers only, pass --text to include comments and string literals)
 ```
 
 The hit that *is* the declaration is flagged `[definition]` (`"definition": true`
@@ -189,6 +192,7 @@ under `--json`), so a rename can tell the declaration apart from a use of the
 same name — which matters when the declaring scope's label is the name itself.
 
 It exits 1 when the name is absent, so it drops into a shell test like `grep`.
+The summary names the source files scanned beside the files that matched.
 
 The match is a bare identifier, so a name carrying call or member syntax —
 `panel()`, `Frame.pairs`, `Type::new` — matches nothing at all, which is the
@@ -246,8 +250,8 @@ Every hit prints the file, its 1-based source line, and the skeleton line, so it
 opens straight in `read`; `--json` emits `{file, line, skeleton}` objects. Like
 grep, it exits 1 when nothing matches. The trailing count names both the files
 that matched and the files scanned, so a real absence cannot be confused with a
-path typo — a path matching no files at all is `skim: no files matched …` on
-stderr with exit 2. When a zero-hit `--grep` pattern contains
+path typo — a path matching no files at all exits 2 (see `PATHS` above). Under
+`--body` the scanned count is source files only, since markdown is skipped. When a zero-hit `--grep` pattern contains
 a backslash-escaped ERE metacharacter (`\|`, `\(`, …) — the `grep` BRE habit —
 the result explains the ERE rule on stderr instead of leaving the miss
 undiagnosed; another zero hit explains the other likely cause, the body the

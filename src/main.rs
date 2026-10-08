@@ -256,24 +256,40 @@ fn run() -> Result<ExitCode> {
         cli.paths.clone()
     };
 
-    // `--grep`, `--referrers` and `--map` walk the same paths: expand once so a
-    // typo exits 2 naming the requested paths, not a "0 results" report, and
-    // `--grep`'s summary can say how many files were scanned.
-    let scan = if cli.referrers.is_some() || cli.grep.is_some() || cli.map {
+    // Every mode but `--check` (which finds documents, and says when it found
+    // none) walks the paths for source: expand once so a typo, or a directory
+    // of nothing skim parses, exits 2 naming the requested paths instead of an
+    // empty render or a "0 results" report.
+    let scan = if cli.check {
+        Vec::new()
+    } else {
         let expanded = discover::expand(&paths);
-        if !expanded.iter().any(|p| p.is_file()) {
+        let parseable = |p: &PathBuf| forced.is_some() || Lang::from_path(p).is_parseable();
+        if !expanded.iter().any(|p| p.is_file() && parseable(p)) {
             let requested: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-            eprintln!("skim: no files matched {}", requested.join(" "));
+            let found = expanded.iter().filter(|p| p.is_file()).count();
+            if found == 0 {
+                eprintln!("skim: no files matched {}", requested.join(" "));
+            } else {
+                eprintln!(
+                    "skim: no source files matched {} ({found} file(s), none in a language skim \
+                     parses; see --list-languages)",
+                    requested.join(" ")
+                );
+            }
             return Ok(ExitCode::from(2));
         }
-        Some(expanded)
-    } else {
-        None
+        expanded
     };
+    // What a `--grep` summary counts as scanned: the files that search reads.
+    // A skeleton search reads markdown too; `--body` reads source only.
     let scanned = scan
-        .as_ref()
-        .map(|e| e.iter().filter(|p| p.is_file()).count())
-        .unwrap_or(0);
+        .iter()
+        .filter(|p| {
+            let lang = forced.unwrap_or_else(|| Lang::from_path(p));
+            p.is_file() && lang.is_parseable() && !(cli.body && lang.is_doc())
+        })
+        .count();
 
     if let Some(symbol) = &cli.referrers {
         let opts = map::MapOptions {
@@ -310,9 +326,7 @@ fn run() -> Result<ExitCode> {
         // The markdown half of the scan set, so a `--body` miss over prose a
         // doc carries can be diagnosed instead of read as an absent concept.
         let scanned_markdown = if cli.body {
-            scan.as_ref()
-                .map(|e| e.iter().filter(|p| Lang::from_path(p).is_doc()).count())
-                .unwrap_or(0)
+            scan.iter().filter(|p| Lang::from_path(p).is_doc()).count()
         } else {
             0
         };

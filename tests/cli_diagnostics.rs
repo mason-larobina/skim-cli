@@ -204,3 +204,62 @@ fn grep_equals_pattern_passes_through_without_panicking() {
     assert!(!err.contains("panic"), "stderr: {err}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn render_docs_and_count_on_a_missing_path_are_errors() {
+    // The default render and `--docs` were silent exit-0 blanks on a typo, the
+    // same failure `--map` had; they share the guard now.
+    let dir = tempdir("render-missing");
+    let missing = dir.join("missing-dir");
+    let missing = missing.to_string_lossy();
+    for args in [
+        vec![&*missing],
+        vec!["--docs", &missing],
+        vec!["--count", &missing],
+    ] {
+        let (code, out, err) = skim(&args);
+        assert_eq!(code, 2, "{args:?} stdout: {out}\nstderr: {err}");
+        assert!(err.contains("no files matched"), "{args:?} stderr: {err}");
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_directory_of_nothing_parseable_is_an_error_not_an_empty_map() {
+    let dir = tempdir("unparseable");
+    std::fs::write(dir.join("sprite.png"), b"\x89PNG").unwrap();
+    for mode in ["--map", "--docs"] {
+        let (code, out, err) = skim(&[mode, &dir.to_string_lossy()]);
+        assert_eq!(code, 2, "{mode} stdout: {out}\nstderr: {err}");
+        assert!(
+            err.contains("no source files matched"),
+            "{mode} stderr: {err}"
+        );
+    }
+    let (code, _out, err) = skim(&["--grep", "x", &dir.to_string_lossy()]);
+    assert_eq!(code, 2, "stderr: {err}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn referrers_summary_names_the_scanned_count() {
+    let dir = java_fixture("referrers-scanned");
+    std::fs::write(dir.join("sprite.png"), b"\x89PNG").unwrap();
+    let (code, out, err) = skim(&["--referrers", "NoSuchName", &dir.to_string_lossy()]);
+    assert_eq!(code, 1, "stderr: {err}");
+    assert!(out.contains("in 0 file(s) (scanned 1;"), "stdout: {out}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn body_scanned_count_excludes_the_markdown_it_skips() {
+    let dir = java_fixture("body-scanned");
+    std::fs::write(dir.join("NOTES.md"), "# alpha\n").unwrap();
+    let (_code, out, err) = skim(&["--grep", "zzz-none", "--body", &dir.to_string_lossy()]);
+    assert!(out.contains("(scanned 1)"), "stdout: {out}");
+    assert!(
+        err.contains("1 markdown file(s) were skipped"),
+        "stderr: {err}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
