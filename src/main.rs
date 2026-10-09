@@ -18,7 +18,12 @@ struct Cli {
     /// Files, directories, or globs. Directories are walked.
     paths: Vec<PathBuf>,
 
-    /// Check doc/comment budgets instead of rendering.
+    /// Check doc/comment budgets instead of rendering. Each row is
+    /// `ok|FAIL <ratio> <doc> (doc=<lines> <metric>=<n> <relation> band LO..HI)`:
+    /// a `sqrt` ratio is doc lines / sqrt(source metric), a `linear` one doc
+    /// lines / source metric, and an `aggregate` row sums every doc its glob
+    /// matches. A FAIL row is followed by the exact ratio and how many doc lines
+    /// bring it back inside the band. `-q` prints only the failures.
     #[arg(long)]
     check: bool,
 

@@ -263,3 +263,21 @@ fn body_scanned_count_excludes_the_markdown_it_skips() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn docs_lines_keeps_comments_and_braces_in_the_gutter() {
+    let dir = tempdir("docs-lines");
+    let file = dir.join("A.java");
+    std::fs::write(
+        &file,
+        "/** Doc. */\nclass A {\n    /** F. */\n    int f;\n}\n",
+    )
+    .unwrap();
+    let (code, out, err) = skim(&["--docs", "--lines", &file.to_string_lossy()]);
+    assert_eq!(code, 0, "stderr: {err}");
+    assert_eq!(
+        out,
+        "       /** Doc. */\n    2  class A {\n           /** F. */\n    4      int f;\n       }\n"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

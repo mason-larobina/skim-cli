@@ -378,6 +378,40 @@ pub fn collect_docs(paths: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// For a row outside its band: the exact ratio (the row's two decimals can
+/// round a 0.2987 up to a floor of 0.30) and the doc lines to add or cut to get
+/// back inside. `None` for a row inside its band.
+pub fn band_hint(c: &CheckReport) -> Option<String> {
+    let per_line = match c.relation.as_str() {
+        "linear" => c.source_metric as f64,
+        _ => (c.source_metric as f64).sqrt(),
+    };
+    let lines = if c.self_check { "skeleton" } else { "doc" };
+    match c.status.as_str() {
+        "under" => {
+            let need = ((c.band[0] * per_line).ceil() as usize).saturating_sub(c.doc_lines);
+            Some(format!(
+                "under: {:.4} < {:.2} - add {} {lines} line(s) to reach the floor",
+                c.ratio,
+                c.band[0],
+                need.max(1)
+            ))
+        }
+        "over" => {
+            let cut = c
+                .doc_lines
+                .saturating_sub((c.band[1] * per_line).floor() as usize);
+            Some(format!(
+                "over: {:.4} > {:.2} - cut {} {lines} line(s) to reach the ceiling",
+                c.ratio,
+                c.band[1],
+                cut.max(1)
+            ))
+        }
+        _ => None,
+    }
+}
+
 pub fn print_human(report: &Report, quiet: bool) {
     // An empty report is a green "0 docs, 0 violation(s)" that reads as a pass;
     // say on stderr that nothing was actually checked.
@@ -420,6 +454,9 @@ pub fn print_human(report: &Report, quiet: bool) {
                 c.band[0],
                 c.band[1]
             );
+        }
+        if let Some(hint) = band_hint(c) {
+            println!("       {hint}");
         }
         if let Some(cm) = &c.comment {
             if !cm.over.is_empty() {

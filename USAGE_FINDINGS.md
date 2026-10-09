@@ -290,3 +290,33 @@ the dominant failure:
 Test coverage added: `tests/map_elision.rs` (2), `tests/miss_hints.rs` (4) and
 `tests/cli_diagnostics.rs` (19, end to end against the built binary), on top of
 the 34 existing integration tests.
+
+## Follow-up: the sessions after 0.5.0
+
+The calls made after 0.5.0 shipped (2026-10-08 23:12 to 2026-10-09 07:55) were
+read the same way: **46 consumer calls / 52 segments in 11 transcripts**, three
+interactive sessions, one Pi session and seven Sonnet worker lanes.
+
+- **The fixed shapes stayed fixed.** No call wrote a flag between `--grep` and
+  its pattern, and no call exited 2. A Pi session read `# map: 8 of 306
+  definitions` and went straight to `read`; a lane read `10 of 51` and moved on.
+- **`--check` by hand was the new tax (10 segments).** A repository's gate can
+  scope the check (mc8's runs `--check --quiet <platform dir>`), while a bare
+  `--check` also reports docs outside it, so a lane saw a FAIL the gate never
+  showed and ran `git stash; skim --check | grep FAIL; git stash pop` to learn
+  whether it was its own. That is the repository's to fix; `-q` was used zero
+  times, every lane piped through `grep FAIL` or `tail` instead.
+- **A FAIL row could print inside its band.** `FAIL 0.30 ... band 0.30..0.80` was
+  a 0.2987 rounded up, and three lanes then grepped `--help` for "budget",
+  "doc=" and "nonblank", which explained none of them. A band FAIL now carries
+  an indented `under: 0.2987 < 0.30 - add 43 doc line(s)` line, and `--check`'s
+  help names the row's fields, the two relations and the aggregate.
+- **`--docs` is still followed by a hunt for the body.** Almost every `--docs`
+  call was followed by `grep -n NAME -A60` or a guessed `sed -n` range. `--lines`
+  already composed with `--docs` - no session combined them - but the doc
+  comments sat outside the number gutter, so the output read ragged. The
+  comments and a type's closing brace now sit in a blank gutter, and the README
+  names `--lines --docs` as the reading form.
+- **Output size (gap 6) is still the open item.** 10 of 46 outputs were over 10
+  kB, the largest a 28 kB `--docs` over two state classes and a 20 kB
+  `--referrers` cut with `head`.

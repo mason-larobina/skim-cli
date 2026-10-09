@@ -120,16 +120,19 @@ skim --lines --docs src/core/Node.java
 ```
 
 ```text
-   13  /**
-       * One node of the draw list: an extent, an opacity flag, …
-       */
+       /**
+        * One node of the draw list: an extent, an opacity flag, …
+        */
    13  public abstract class Node {
    59      public abstract Object token();
    78      public abstract void draw(ImageBuffer target, Box2d damage, Stats stats);
 ```
 
 The line is the declaration's own `start_position`, so `--lines` composes with
-`--docs` without numbering the doc block.
+`--docs` without numbering the doc block: the comment and a type's closing brace
+sit in a blank gutter as wide as the number, aligned with what they belong to.
+`--lines --docs` is the reading form of a contract - the comment says what a
+declaration promises, the number says where to `read` its body.
 
 ## Repo map (`--map`)
 
@@ -404,6 +407,15 @@ Each result line names the contract it was checked against in brackets —
 that unexpectedly fell back to the sibling heuristic is visible instead of
 silent. A doc with no tracked source is counted in one summary line rather than
 listed; `--json` keeps the per-doc detail either way.
+
+A row prints its ratio to two decimals, which can round a failing `0.2987` onto
+a `0.30` floor. So a `FAIL` row for a band is followed by an indented line with
+the exact ratio and the fix, counted in doc lines:
+
+```text
+FAIL    0.30  src/*.md (24 docs, aggregate)  (doc=9625 nonblank=32226 linear band 0.30..0.80) [config: src/*.md (aggregate)]
+       under: 0.2987 < 0.30 - add 43 doc line(s) to reach the floor
+```
 
 ## Supported languages
 

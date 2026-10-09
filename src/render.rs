@@ -82,6 +82,9 @@ fn find_body(node: Node, lang: Lang) -> Option<Node> {
     None
 }
 
+/// Width of the `--lines` prefix: a five-digit line number and two spaces.
+const GUTTER: usize = 7;
+
 pub(crate) fn emit(
     node: Node,
     src: &str,
@@ -94,12 +97,12 @@ pub(crate) fn emit(
     let kind = node.kind();
     if lang.def_kinds().contains(&kind) {
         if docs {
-            out.push_str(&leading_comments(src, node, lang, indent));
+            out.push_str(&leading_comments(src, node, lang, indent, lines));
         }
         let body = find_body(node, lang);
         let pad = "    ".repeat(indent);
         let num = if lines {
-            format!("{:>5}  ", node.start_position().row + 1)
+            format!("{:>w$}  ", node.start_position().row + 1, w = GUTTER - 2)
         } else {
             String::new()
         };
@@ -118,6 +121,9 @@ pub(crate) fn emit(
                 }
             }
             if !close.is_empty() {
+                if lines {
+                    out.push_str(&" ".repeat(GUTTER));
+                }
                 out.push_str(&pad);
                 out.push_str(close);
                 out.push('\n');
@@ -184,8 +190,10 @@ pub(crate) fn render_def(node: Node, src: &str, lang: Lang, indent: usize, docs:
 /// The contiguous run of comment siblings immediately above `node`, re-indented
 /// to `indent`. A comment that shares a line with the statement before it is a
 /// trailing comment, not a doc comment, and is ignored. Returns an empty string
-/// when there is no adjacent leading comment.
-fn leading_comments(src: &str, node: Node, lang: Lang, indent: usize) -> String {
+/// when there is no adjacent leading comment. With `lines`, each comment line
+/// gets a blank gutter as wide as a declaration's line number, so the comment
+/// stays aligned with the declaration it documents.
+fn leading_comments(src: &str, node: Node, lang: Lang, indent: usize, lines: bool) -> String {
     let kinds = lang.comment_kinds();
     if kinds.is_empty() {
         return String::new();
@@ -220,7 +228,12 @@ fn leading_comments(src: &str, node: Node, lang: Lang, indent: usize) -> String 
     if block.is_empty() {
         return String::new();
     }
-    let pad = "    ".repeat(indent);
+    let gutter = if lines {
+        " ".repeat(GUTTER)
+    } else {
+        String::new()
+    };
+    let pad = gutter + &"    ".repeat(indent);
     let mut out = String::new();
     for c in block.into_iter().rev() {
         let base = c.start_position().column;
